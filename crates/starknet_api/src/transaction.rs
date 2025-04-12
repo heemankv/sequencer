@@ -8,33 +8,21 @@ use starknet_types_core::felt::Felt;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
+use crate::StarknetApiError;
 use crate::block::{BlockHash, BlockNumber};
 use crate::core::{
-    ChainId,
-    ClassHash,
-    CompiledClassHash,
-    ContractAddress,
-    EntryPointSelector,
-    EthAddress,
-    Nonce,
+    ChainId, ClassHash, CompiledClassHash, ContractAddress, EntryPointSelector, EthAddress, Nonce,
 };
 use crate::data_availability::DataAvailabilityMode;
 use crate::hash::StarkHash;
 use crate::serde_utils::PrefixedBytesAsHex;
 use crate::transaction_hash::{
-    get_declare_transaction_v0_hash,
-    get_declare_transaction_v1_hash,
-    get_declare_transaction_v2_hash,
-    get_declare_transaction_v3_hash,
-    get_deploy_account_transaction_v1_hash,
-    get_deploy_account_transaction_v3_hash,
-    get_deploy_transaction_hash,
-    get_invoke_transaction_v0_hash,
-    get_invoke_transaction_v1_hash,
-    get_invoke_transaction_v3_hash,
-    get_l1_handler_transaction_hash,
+    get_declare_transaction_v0_hash, get_declare_transaction_v1_hash,
+    get_declare_transaction_v2_hash, get_declare_transaction_v3_hash,
+    get_deploy_account_transaction_v1_hash, get_deploy_account_transaction_v3_hash,
+    get_deploy_transaction_hash, get_invoke_transaction_v0_hash, get_invoke_transaction_v1_hash,
+    get_invoke_transaction_v3_hash, get_l1_handler_transaction_hash,
 };
-use crate::StarknetApiError;
 
 pub trait TransactionHasher {
     fn calculate_transaction_hash(
@@ -775,7 +763,7 @@ pub struct MessageToL2 {
 #[derive(Debug, Default, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
 pub struct MessageToL1 {
     pub from_address: ContractAddress,
-    pub to_address: EthAddress,
+    pub to_address: ContractAddress,
     pub payload: L2ToL1Payload,
 }
 

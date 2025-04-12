@@ -2,25 +2,15 @@ use std::collections::HashMap;
 
 use starknet_api::core::{ContractAddress, EthAddress, PatriciaKey};
 use starknet_api::transaction::{
-    Builtin,
-    DeclareTransactionOutput,
-    DeployAccountTransactionOutput,
-    DeployTransactionOutput,
-    ExecutionResources,
-    Fee,
-    GasVector,
-    InvokeTransactionOutput,
-    L1HandlerTransactionOutput,
-    L2ToL1Payload,
-    MessageToL1,
-    RevertedTransactionExecutionStatus,
-    TransactionExecutionStatus,
+    Builtin, DeclareTransactionOutput, DeployAccountTransactionOutput, DeployTransactionOutput,
+    ExecutionResources, Fee, GasVector, InvokeTransactionOutput, L1HandlerTransactionOutput,
+    L2ToL1Payload, MessageToL1, RevertedTransactionExecutionStatus, TransactionExecutionStatus,
     TransactionOutput,
 };
 use starknet_types_core::felt::Felt;
 
-use super::common::try_from_starkfelt_to_u128;
 use super::ProtobufConversionError;
+use super::common::try_from_starkfelt_to_u128;
 use crate::protobuf;
 
 impl TryFrom<protobuf::Receipt> for TransactionOutput {
@@ -399,7 +389,7 @@ impl TryFrom<protobuf::MessageToL1> for MessageToL1 {
         let from_address = ContractAddress::try_from(from_address_felt)
             .expect("Converting ContractAddress from Felt failed");
 
-        let to_address = EthAddress::try_from(value.to_address.ok_or(
+        let to_address = ContractAddress::try_from(value.to_address.ok_or(
             ProtobufConversionError::MissingField { field_description: "MessageToL1::to_address" },
         )?)?;
 

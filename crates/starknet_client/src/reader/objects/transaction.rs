@@ -7,39 +7,17 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use starknet_api::core::{
-    ClassHash,
-    CompiledClassHash,
-    ContractAddress,
-    EntryPointSelector,
-    EthAddress,
-    Nonce,
+    ClassHash, CompiledClassHash, ContractAddress, EntryPointSelector, EthAddress, Nonce,
 };
 use starknet_api::hash::StarkHash;
 use starknet_api::transaction::{
-    AccountDeploymentData,
-    Calldata,
-    ContractAddressSalt,
-    DeclareTransactionOutput,
-    DeployAccountTransactionOutput,
-    DeployTransactionOutput,
-    Event,
-    Fee,
-    GasVector,
-    InvokeTransactionOutput,
-    L1HandlerTransactionOutput,
-    L1ToL2Payload,
-    L2ToL1Payload,
-    MessageToL1,
-    PaymasterData,
-    ResourceBoundsMapping,
-    RevertedTransactionExecutionStatus as SnApiRevertedTransactionExecutionStatus,
-    Tip,
-    TransactionExecutionStatus as SnApiTransactionExecutionStatus,
-    TransactionHash,
-    TransactionOffsetInBlock,
-    TransactionOutput,
-    TransactionSignature,
-    TransactionVersion,
+    AccountDeploymentData, Calldata, ContractAddressSalt, DeclareTransactionOutput,
+    DeployAccountTransactionOutput, DeployTransactionOutput, Event, Fee, GasVector,
+    InvokeTransactionOutput, L1HandlerTransactionOutput, L1ToL2Payload, L2ToL1Payload, MessageToL1,
+    PaymasterData, ResourceBoundsMapping,
+    RevertedTransactionExecutionStatus as SnApiRevertedTransactionExecutionStatus, Tip,
+    TransactionExecutionStatus as SnApiTransactionExecutionStatus, TransactionHash,
+    TransactionOffsetInBlock, TransactionOutput, TransactionSignature, TransactionVersion,
 };
 use strum_macros::EnumIter;
 use tracing::error;
@@ -845,7 +823,7 @@ impl From<L1ToL2Message> for starknet_api::transaction::MessageToL2 {
 #[derive(Debug, Default, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub struct L2ToL1Message {
     pub from_address: ContractAddress,
-    pub to_address: EthAddress,
+    pub to_address: ContractAddress,
     pub payload: L2ToL1Payload,
 }
 
