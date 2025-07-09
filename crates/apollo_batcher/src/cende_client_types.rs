@@ -293,7 +293,8 @@ impl OrderedItem for OrderedL2ToL1Message {
             self.order,
             L2ToL1Message {
                 from_address,
-                to_address: self.message.to_address,
+                to_address: EthAddress::try_from(self.message.to_address)
+                    .expect("Failed to convert L1Address to EthAddress"),
                 payload: self.message.payload.clone(),
             },
         )
