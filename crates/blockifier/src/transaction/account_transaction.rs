@@ -822,10 +822,7 @@ impl<U: UpdatableState> ExecutableTransaction<U> for AccountTransaction {
         self.perform_pre_validation_stage(state, &tx_context)?;
 
         // Run validation and execution.
-        let mut initial_gas = tx_context.initial_sierra_gas();
-        if !self.execution_flags.charge_fee {
-            initial_gas = tx_context.block_context.versioned_constants.initial_gas_no_user_l2_bound();
-        };
+        let initial_gas = tx_context.initial_sierra_gas();
         let ValidateExecuteCallInfo {
             validate_call_info,
             execute_call_info,
