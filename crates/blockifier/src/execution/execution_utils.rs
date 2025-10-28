@@ -60,7 +60,7 @@ pub fn execute_entry_point_call_wrapper(
     context: &mut EntryPointExecutionContext,
     remaining_gas: &mut u64,
 ) -> EntryPointExecutionResult<CallInfo> {
-    log::info!("inside the execute_entry_point_call_wrapper now");
+    log::debug!("inside the execute_entry_point_call_wrapper now");
     let current_tracked_resource = compiled_class.get_current_tracked_resource(context);
     if current_tracked_resource == TrackedResource::CairoSteps {
         // Override the initial gas with a high value so it won't limit the run.
@@ -131,7 +131,7 @@ pub fn execute_entry_point_call(
             )
         }
         RunnableCompiledClass::V1(compiled_class) => {
-            log::info!("inside the execute_entry_point_call v1 class");
+            log::debug!("inside the execute_entry_point_call v1 class");
             entry_point_execution::execute_entry_point_call(call, compiled_class, state, context)
         }
         #[cfg(feature = "cairo_native")]

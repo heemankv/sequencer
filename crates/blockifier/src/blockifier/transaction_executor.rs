@@ -236,7 +236,7 @@ pub(crate) fn finalize_block<S: StateReader>(
     block_context: &BlockContext,
 ) -> TransactionExecutorResult<BlockExecutionSummary> {
     let bouncer = lock_bouncer(bouncer);
-    log::info!(
+    log::debug!(
         "Block {} final weights: {:?}.",
         block_context.block_info.block_number,
         bouncer.get_bouncer_weights()
