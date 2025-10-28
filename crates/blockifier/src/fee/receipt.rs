@@ -129,7 +129,7 @@ impl TransactionReceipt {
     ) -> Self {
         Self::from_params(TransactionReceiptParameters {
             tx_context,
-            gas_mode: GasVectorComputationMode::NoL2Gas, /* Although L1 handler resources are
+            gas_mode: GasVectorComputationMode::All, /* Although L1 handler resources are
                                                       * deprecated, we still want to compute a
                                                       * full gas vector. */
             calldata_length: l1_handler_payload_size,
