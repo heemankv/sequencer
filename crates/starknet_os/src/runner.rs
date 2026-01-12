@@ -9,9 +9,7 @@ use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::types::layout_name::LayoutName;
 use cairo_vm::types::program::Program;
 use cairo_vm::vm::runners::cairo_pie::{
-    BuiltinAdditionalData,
-    CairoPie,
-    OutputBuiltinAdditionalData,
+    BuiltinAdditionalData, CairoPie, OutputBuiltinAdditionalData,
 };
 use cairo_vm::vm::runners::cairo_runner::CairoRunner;
 use starknet_api::core::CompiledClassHash;
@@ -27,11 +25,7 @@ use crate::hint_processor::panicking_state_reader::PanickingStateReader;
 use crate::hint_processor::snos_hint_processor::SnosHintProcessor;
 use crate::hints::hint_implementation::output::OUTPUT_ATTRIBUTE_FACT_TOPOLOGY;
 use crate::io::os_input::{
-    CachedStateInput,
-    OsBlockInput,
-    OsHints,
-    OsHintsConfig,
-    StarknetOsInput,
+    CachedStateInput, OsBlockInput, OsHints, OsHintsConfig, StarknetOsInput,
 };
 use crate::io::os_output::{StarknetAggregatorRunnerOutput, StarknetOsRunnerOutput};
 use crate::metrics::{AggregatorMetrics, OsMetrics};
@@ -92,12 +86,27 @@ fn run_program<'a, HP: HintProcessor + CommonHintProcessor<'a>>(
     cairo_runner
         .read_return_values(allow_missing_builtins)
         .map_err(StarknetOsError::RunnerError)?;
-    cairo_runner
-        .relocate(cairo_run_config.relocate_mem)
-        .map_err(|e| StarknetOsError::VirtualMachineError(e.into()))?;
+
+    // MEMORY OPTIMIZATION: Skip full relocation for CairoPie generation.
+    // The relocate() call creates relocated_memory and relocated_trace which are NOT used by
+    // get_cairo_pie(). CairoPie uses the original vm.segments.memory directly.
+    // Only compute_effective_sizes() is needed for segment size metadata.
+    // This saves ~5GB peak memory by avoiding trace duplication for large blocks.
+    cairo_runner.vm.segments.compute_effective_sizes();
+
+    // MEMORY OPTIMIZATION: Clear the trace before creating CairoPie.
+    // The trace is only needed for proof generation (via relocate_trace), not for CairoPie.
+    // For large blocks, the trace can be ~1.5GB. Clearing it before get_cairo_pie()
+    // prevents peak memory from including both trace AND CairoPieMemory simultaneously.
+    cairo_runner.vm.clear_trace();
 
     // Parse the Cairo VM output.
     let cairo_pie = cairo_runner.get_cairo_pie().map_err(StarknetOsError::RunnerError)?;
+
+    // MEMORY OPTIMIZATION: Clear VM memory after CairoPie creation.
+    // The CairoPie now has its own copy of the memory, so we can release the original.
+    // This prevents holding ~1.2GB of duplicate memory during metrics collection.
+    cairo_runner.vm.segments.memory.clear_data();
     Ok(RunnerReturnObject { raw_output, cairo_pie, cairo_runner })
 }
 

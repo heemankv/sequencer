@@ -400,3 +400,7 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 [workspace.lints.clippy]
 as_conversions = "warn"
+
+# Local development patches for memory optimization work
+[patch.crates-io]
+cairo-vm = { path = "../cairo-vm/vm" }
