@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use cairo_vm::hint_processor::hint_processor_definition::HintProcessor;
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::types::layout::CairoLayoutParams;
@@ -127,7 +129,18 @@ pub fn execute_entry_point_call(
     // Execute.
     let bytecode_length = compiled_class.bytecode_length();
     let program_segment_size = bytecode_length + program_extra_data_length;
-    run_entry_point(&mut runner, &mut syscall_handler, entry_point, args, program_segment_size)?;
+
+    // Time the Cairo VM execution
+    let vm_exec_start = Instant::now();
+    run_entry_point(&mut runner, &mut syscall_handler, entry_point.clone(), args, program_segment_size)?;
+    let vm_exec_time = vm_exec_start.elapsed();
+    log::info!(
+        "Cairo VM execution completed: time_us={}, time_ms={:.3}, selector={}, contract_address={}",
+        vm_exec_time.as_micros(),
+        vm_exec_time.as_micros() as f64 / 1000.0,
+        entry_point.selector.0,
+        syscall_handler.base.call.storage_address
+    );
 
     Ok(finalize_execution(
         runner,

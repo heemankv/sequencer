@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+#[cfg(feature = "cairo_native")]
+use std::time::Instant;
 
 use cairo_vm::serde::deserialize_program::{
     deserialize_array_of_bigint_hex,
@@ -129,23 +131,63 @@ pub fn execute_entry_point_call(
             )
         }
         RunnableCompiledClass::V1(compiled_class) => {
+            // Log Sierra version info for V1 (VM) contracts - no native class available
+            let contract_sierra_version = &compiled_class.sierra_version;
+            let min_sierra_version = &context.versioned_constants().min_sierra_version_for_sierra_gas;
+            let current_tracked = context.tracked_resource_stack.last();
+            log::info!(
+                "USING Cairo VM (no native class): contract_address={}, sierra_version={:?}, min_required={:?}, parent_tracked={:?}",
+                call.storage_address,
+                contract_sierra_version,
+                min_sierra_version,
+                current_tracked
+            );
             entry_point_execution::execute_entry_point_call(call, compiled_class, state, context)
         }
         #[cfg(feature = "cairo_native")]
         RunnableCompiledClass::V1Native(compiled_class) => {
-            if context.tracked_resource_stack.last() == Some(&TrackedResource::CairoSteps) {
-                // We cannot run native with cairo steps as the tracked resources (it's a vm
-                // resource).
+            // Check if we need to fall back to VM due to TrackedResource
+            let contract_sierra_version = &compiled_class.casm().sierra_version;
+            let min_sierra_version = &context.versioned_constants().min_sierra_version_for_sierra_gas;
+            let current_tracked = context.tracked_resource_stack.last();
+            let uses_native = current_tracked != Some(&TrackedResource::CairoSteps);
+
+            if uses_native {
+                // Actually using Cairo Native
+                log::info!(
+                    "USING Cairo Native: contract_address={}, sierra_version={:?}, min_required={:?}, parent_tracked={:?}",
+                    call.storage_address,
+                    contract_sierra_version,
+                    min_sierra_version,
+                    current_tracked
+                );
+                // Time the TOTAL native execution path (after compilation, includes setup + run)
+                let native_total_start = Instant::now();
+                let result = native_entry_point_execution::execute_entry_point_call(
+                    call,
+                    compiled_class,
+                    state,
+                    context,
+                );
+                let native_total_time = native_total_start.elapsed();
+                log::info!(
+                    "Cairo Native TOTAL (post-compilation): time_us={}, time_ms={:.3}",
+                    native_total_time.as_micros(),
+                    native_total_time.as_micros() as f64 / 1000.0
+                );
+                result
+            } else {
+                // Native class available but falling back to VM due to CairoSteps
+                log::info!(
+                    "USING Cairo VM (native available but TrackedResource=CairoSteps): contract_address={}, sierra_version={:?}, min_required={:?}, parent_tracked={:?}",
+                    call.storage_address,
+                    contract_sierra_version,
+                    min_sierra_version,
+                    current_tracked
+                );
                 entry_point_execution::execute_entry_point_call(
                     call,
                     compiled_class.casm(),
-                    state,
-                    context,
-                )
-            } else {
-                native_entry_point_execution::execute_entry_point_call(
-                    call,
-                    compiled_class,
                     state,
                     context,
                 )

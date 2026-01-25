@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use cairo_native::execution_result::{BuiltinStats, ContractExecutionResult};
 use cairo_native::utils::BuiltinCosts;
 use cairo_vm::types::builtin_name::BuiltinName;
@@ -51,12 +53,22 @@ pub fn execute_entry_point_call(
         .checked_sub(initial_budget)
         .ok_or(PreExecutionError::InsufficientEntryPointGas)?;
 
+    // Time only the native execution (not compilation)
+    let native_exec_start = Instant::now();
     let execution_result = compiled_class.executor.run(
         entry_point.selector.0,
         &syscall_handler.base.call.calldata.0.clone(),
         call_initial_gas,
         Some(builtin_costs),
         &mut syscall_handler,
+    );
+    let native_exec_time = native_exec_start.elapsed();
+    log::info!(
+        "Cairo Native execution completed (excluding compilation): time_us={}, time_ms={:.3}, selector={}, contract_address={}",
+        native_exec_time.as_micros(),
+        native_exec_time.as_micros() as f64 / 1000.0,
+        entry_point.selector.0,
+        syscall_handler.base.call.storage_address
     );
 
     syscall_handler.finalize();
