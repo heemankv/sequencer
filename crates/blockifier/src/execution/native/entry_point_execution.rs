@@ -1,8 +1,7 @@
-use std::time::Instant;
-
 use cairo_native::execution_result::{BuiltinStats, ContractExecutionResult};
 use cairo_native::utils::BuiltinCosts;
 use cairo_vm::types::builtin_name::BuiltinName;
+use std::time::Instant;
 
 use crate::execution::call_info::{BuiltinCounterMap, CallExecution, CallInfo, Retdata};
 use crate::execution::contract_class::TrackedResource;
@@ -74,7 +73,6 @@ pub fn execute_entry_point_call(
     syscall_handler.finalize();
 
     let call_result = execution_result.map_err(EntryPointExecutionError::NativeUnexpectedError)?;
-
     if let Some(error) = syscall_handler.unrecoverable_error {
         return Err(EntryPointExecutionError::NativeUnrecoverableError(Box::new(error)));
     }

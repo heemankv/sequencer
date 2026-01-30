@@ -319,11 +319,6 @@ impl<'a> SyscallHintProcessor<'a> {
         &mut self,
         vm: &mut VirtualMachine,
     ) -> SyscallResult<Relocatable> {
-        // Note: the returned version in the transaction info struct might not be equal to the
-        // actual transaction version.
-        // Also, the returned version is a property of the current entry-point execution,
-        // so it is okay to allocate and cache it once without re-checking the version in every
-        // `get_execution_info` syscall invocation.
         match self.execution_info_ptr {
             Some(execution_info_ptr) => Ok(execution_info_ptr),
             None => {
@@ -541,12 +536,16 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
 
         let retdata_segment = execute_inner_call(entry_point, vm, syscall_handler, remaining_gas)
             .map_err(|error| {
-            SyscallExecutionError::from_self_or_revert(error.try_extract_revert().map_original(
-                |error| {
-                    error.as_call_contract_execution_error(class_hash, storage_address, selector)
-                },
-            ))
-        })?;
+                SyscallExecutionError::from_self_or_revert(error.try_extract_revert().map_original(
+                    |error| {
+                        error.as_call_contract_execution_error(
+                            class_hash,
+                            storage_address,
+                            selector,
+                        )
+                    },
+                ))
+            })?;
 
         Ok(CallContractResponse { segment: retdata_segment })
     }
@@ -638,13 +637,13 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
 
         let retdata_segment = execute_inner_call(entry_point, vm, syscall_handler, remaining_gas)
             .map_err(|error| match error {
-            SyscallExecutionError::Revert { .. } => error,
-            _ => error.as_lib_call_execution_error(
-                request.class_hash,
-                syscall_handler.storage_address(),
-                request.function_selector,
-            ),
-        })?;
+                SyscallExecutionError::Revert { .. } => error,
+                _ => error.as_lib_call_execution_error(
+                    request.class_hash,
+                    syscall_handler.storage_address(),
+                    request.function_selector,
+                ),
+            })?;
 
         Ok(LibraryCallResponse { segment: retdata_segment })
     }
