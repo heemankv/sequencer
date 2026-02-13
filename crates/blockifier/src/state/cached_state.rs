@@ -1,16 +1,19 @@
 use std::cell::{Ref, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use indexmap::IndexMap;
 use starknet_api::abi::abi_utils::get_fee_token_var_address;
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::state::StorageKey;
 use starknet_types_core::felt::Felt;
+use std::sync::OnceLock;
 
 use crate::context::TransactionContext;
 use crate::execution::contract_class::RunnableCompiledClass;
 use crate::state::errors::StateError;
 use crate::state::state_api::{State, StateReader, StateResult, UpdatableState};
+use crate::timing;
 use crate::transaction::objects::TransactionExecutionInfo;
 use crate::utils::{strict_subtract_mappings, subtract_mappings};
 
@@ -19,6 +22,11 @@ use crate::utils::{strict_subtract_mappings, subtract_mappings};
 mod test;
 
 pub type ContractClassMapping = HashMap<ClassHash, RunnableCompiledClass>;
+
+fn blockifier_storage_logs_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("BLOCKIFIER_STORAGE_LOGS").is_some())
+}
 
 /// Caches read and write requests.
 ///
@@ -126,6 +134,16 @@ impl<S: StateReader> StateReader for CachedState<S> {
         contract_address: ContractAddress,
         key: StorageKey,
     ) -> StateResult<Felt> {
+        if blockifier_storage_logs_enabled() {
+            let contract_felt: Felt = contract_address.into();
+            let key_felt: Felt = key.into();
+            tracing::info!(
+                target: "blockifier-storage-read",
+                "blockifier-storage-read: contract=0x{:x} key=0x{:x}",
+                contract_felt,
+                key_felt
+            );
+        }
         let mut cache = self.cache.borrow_mut();
 
         if cache.get_storage_at(contract_address, key).is_none() {
@@ -230,17 +248,25 @@ impl<S: StateReader> State for CachedState<S> {
         key: StorageKey,
         value: Felt,
     ) -> StateResult<()> {
-        self.cache.get_mut().set_storage_value(contract_address, key, value);
-
-        Ok(())
+        let start = Instant::now();
+        let result = (|| {
+            self.cache.get_mut().set_storage_value(contract_address, key, value);
+            Ok(())
+        })();
+        timing::record_state_write(start.elapsed().as_micros());
+        result
     }
 
     fn increment_nonce(&mut self, contract_address: ContractAddress) -> StateResult<()> {
-        let current_nonce = self.get_nonce_at(contract_address)?;
-        let next_nonce = Nonce(current_nonce.0 + Felt::ONE);
-        self.cache.get_mut().set_nonce_value(contract_address, next_nonce);
-
-        Ok(())
+        let start = Instant::now();
+        let result = (|| {
+            let current_nonce = self.get_nonce_at(contract_address)?;
+            let next_nonce = Nonce(current_nonce.0 + Felt::ONE);
+            self.cache.get_mut().set_nonce_value(contract_address, next_nonce);
+            Ok(())
+        })();
+        timing::record_state_write(start.elapsed().as_micros());
+        result
     }
 
     fn set_class_hash_at(
@@ -248,12 +274,17 @@ impl<S: StateReader> State for CachedState<S> {
         contract_address: ContractAddress,
         class_hash: ClassHash,
     ) -> StateResult<()> {
-        if contract_address == ContractAddress::default() {
-            return Err(StateError::OutOfRangeContractAddress);
-        }
+        let start = Instant::now();
+        let result = (|| {
+            if contract_address == ContractAddress::default() {
+                return Err(StateError::OutOfRangeContractAddress);
+            }
 
-        self.cache.get_mut().set_class_hash_write(contract_address, class_hash);
-        Ok(())
+            self.cache.get_mut().set_class_hash_write(contract_address, class_hash);
+            Ok(())
+        })();
+        timing::record_state_write(start.elapsed().as_micros());
+        result
     }
 
     fn set_contract_class(
@@ -261,10 +292,15 @@ impl<S: StateReader> State for CachedState<S> {
         class_hash: ClassHash,
         contract_class: RunnableCompiledClass,
     ) -> StateResult<()> {
-        self.class_hash_to_class.get_mut().insert(class_hash, contract_class);
-        let mut cache = self.cache.borrow_mut();
-        cache.declare_contract(class_hash);
-        Ok(())
+        let start = Instant::now();
+        let result = (|| {
+            self.class_hash_to_class.get_mut().insert(class_hash, contract_class);
+            let mut cache = self.cache.borrow_mut();
+            cache.declare_contract(class_hash);
+            Ok(())
+        })();
+        timing::record_state_write(start.elapsed().as_micros());
+        result
     }
 
     fn set_compiled_class_hash(
@@ -272,8 +308,13 @@ impl<S: StateReader> State for CachedState<S> {
         class_hash: ClassHash,
         compiled_class_hash: CompiledClassHash,
     ) -> StateResult<()> {
-        self.cache.get_mut().set_compiled_class_hash_write(class_hash, compiled_class_hash);
-        Ok(())
+        let start = Instant::now();
+        let result = (|| {
+            self.cache.get_mut().set_compiled_class_hash_write(class_hash, compiled_class_hash);
+            Ok(())
+        })();
+        timing::record_state_write(start.elapsed().as_micros());
+        result
     }
 }
 
@@ -317,13 +358,57 @@ impl From<StorageView> for IndexMap<ContractAddress, IndexMap<StorageKey, Felt>>
     }
 }
 
+#[cfg_attr(feature = "transaction_serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StateMaps {
     pub nonces: HashMap<ContractAddress, Nonce>,
     pub class_hashes: HashMap<ContractAddress, ClassHash>,
+    #[cfg_attr(feature = "transaction_serde", serde(with = "state_maps_storage_serde"))]
     pub storage: HashMap<StorageEntry, Felt>,
     pub compiled_class_hashes: HashMap<ClassHash, CompiledClassHash>,
     pub declared_contracts: HashMap<ClassHash, bool>,
+}
+
+#[cfg(feature = "transaction_serde")]
+mod state_maps_storage_serde {
+    use super::{ContractAddress, Felt, StorageEntry, StorageKey};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::HashMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct StorageEntrySerde {
+        contract_address: ContractAddress,
+        key: StorageKey,
+        value: Felt,
+    }
+
+    pub fn serialize<S>(storage: &HashMap<StorageEntry, Felt>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let entries = storage
+            .iter()
+            .map(|((contract_address, key), value)| StorageEntrySerde {
+                contract_address: *contract_address,
+                key: *key,
+                value: *value,
+            })
+            .collect::<Vec<_>>();
+
+        entries.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<StorageEntry, Felt>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<StorageEntrySerde>::deserialize(deserializer)?;
+        let mut storage = HashMap::with_capacity(entries.len());
+        for entry in entries {
+            storage.insert((entry.contract_address, entry.key), entry.value);
+        }
+        Ok(storage)
+    }
 }
 
 impl StateMaps {

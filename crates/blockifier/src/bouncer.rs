@@ -19,6 +19,8 @@ use crate::execution::call_info::{BuiltinCounterMap, ExecutionSummary};
 use crate::execution::casm_hash_estimation::EstimatedExecutionResources;
 use crate::fee::gas_usage::get_onchain_data_segment_length;
 use crate::fee::resources::TransactionResources;
+use crate::fee::receipt::skip_fee_and_resources;
+use crate::hardcoded_constants;
 use crate::state::cached_state::{StateChangesKeys, StorageEntry};
 use crate::state::state_api::StateReader;
 use crate::transaction::errors::TransactionExecutionError;
@@ -395,6 +397,28 @@ impl TxWeights {
     }
 }
 
+fn hardcoded_bouncer_weights(is_first: bool) -> BouncerWeights {
+    let (sierra_gas, proving_gas) = hardcoded_constants::hardcoded_bouncer_gas(is_first);
+    BouncerWeights {
+        l1_gas: 0,
+        message_segment_length: 0,
+        n_events: 0,
+        state_diff_size: 0,
+        sierra_gas,
+        n_txs: 0,
+        proving_gas,
+    }
+}
+
+fn hardcoded_tx_weights(is_first: bool) -> TxWeights {
+    TxWeights {
+        bouncer_weights: hardcoded_bouncer_weights(is_first),
+        casm_hash_computation_data_sierra_gas: CasmHashComputationData::empty(),
+        casm_hash_computation_data_proving_gas: CasmHashComputationData::empty(),
+        class_hashes_to_migrate: HashMap::default(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct BuiltinWeights {
     pub gas_costs: BuiltinGasCosts,
@@ -534,6 +558,26 @@ impl Bouncer {
         &self.accumulated_weights.bouncer_weights
     }
 
+    pub fn can_fit_bouncer_weights(&self, delta: BouncerWeights) -> bool {
+        let current = self.get_bouncer_weights();
+        if let Some(next) = current.checked_add(delta) {
+            self.bouncer_config.has_room(next)
+        } else {
+            false
+        }
+    }
+
+    pub fn try_add_bouncer_weights(&mut self, delta: BouncerWeights) -> TransactionExecutorResult<()> {
+        let current = self.get_bouncer_weights();
+        let next = current.checked_add(delta).ok_or(TransactionExecutorError::BlockFull)?;
+        if !self.bouncer_config.has_room(next) {
+            Err(TransactionExecutorError::BlockFull)
+        } else {
+            self.accumulated_weights.bouncer_weights = next;
+            Ok(())
+        }
+    }
+
     pub fn get_mut_casm_hash_computation_data_sierra_gas(
         &mut self,
     ) -> &mut CasmHashComputationData {
@@ -584,6 +628,32 @@ impl Bouncer {
             .visited_storage_entries
             .difference(&self.visited_storage_entries)
             .count();
+        if skip_fee_and_resources() {
+            let is_first = self.get_bouncer_weights().n_txs == 0;
+            let tx_weights = hardcoded_tx_weights(is_first);
+
+            let tx_bouncer_weights = tx_weights.bouncer_weights;
+            let err_msg = format!(
+                "Addition overflow. Transaction weights: {tx_bouncer_weights:?}, block weights: {:?}.",
+                self.get_bouncer_weights()
+            );
+            let next_accumulated_weights =
+                self.get_bouncer_weights().checked_add(tx_bouncer_weights).expect(&err_msg);
+            if !self.bouncer_config.has_room(next_accumulated_weights) {
+                log::debug!(
+                    "Transaction cannot be added to the current block, block capacity reached; \
+                     transaction weights: {:?}, block weights: {:?}. Block max capacity reached on \
+                     fields: {}",
+                    tx_weights.bouncer_weights,
+                    self.get_bouncer_weights(),
+                    self.bouncer_config.get_exceeded_weights(next_accumulated_weights)
+                );
+                Err(TransactionExecutorError::BlockFull)?
+            }
+
+            self.update(tx_weights, tx_execution_summary, &marginal_state_changes_keys);
+            return Ok(());
+        }
         let tx_weights = get_tx_weights(
             state_reader,
             &marginal_executed_class_hashes,
@@ -989,6 +1059,10 @@ pub fn verify_tx_weights_within_max_capacity<S: StateReader>(
     bouncer_config: &BouncerConfig,
     versioned_constants: &VersionedConstants,
 ) -> TransactionExecutionResult<()> {
+    if skip_fee_and_resources() {
+        let tx_weights = hardcoded_bouncer_weights(true);
+        return bouncer_config.within_max_capacity_or_err(tx_weights);
+    }
     let tx_weights = get_tx_weights(
         state_reader,
         &tx_execution_summary.executed_class_hashes,

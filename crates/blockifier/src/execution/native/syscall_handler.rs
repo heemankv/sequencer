@@ -1,6 +1,7 @@
 use std::convert::From;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Instant;
 
 use ark_ec::short_weierstrass::{Affine, Projective, SWCurveConfig};
 use ark_ff::{BigInt, PrimeField};
@@ -38,6 +39,7 @@ use crate::execution::errors::EntryPointExecutionError;
 use crate::execution::native::utils::{calculate_resource_bounds, default_tx_v2_info};
 use crate::execution::secp;
 use crate::execution::syscalls::common_syscall_logic::base_keccak;
+use crate::timing;
 use crate::execution::syscalls::hint_processor::{SyscallExecutionError, OUT_OF_GAS_ERROR_FELT};
 use crate::execution::syscalls::syscall_base::SyscallHandlerBase;
 use crate::execution::syscalls::vm_syscall_utils::{
@@ -254,32 +256,44 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         block_number: u64,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Felt> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.get_block_hash.base_syscall_cost(),
-            SyscallSelector::GetBlockHash,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.get_block_hash.base_syscall_cost(),
+                SyscallSelector::GetBlockHash,
+            )?;
 
-        match self.base.get_block_hash(block_number) {
-            Ok(value) => Ok(value),
-            Err(e) => Err(self.handle_error(remaining_gas, e)),
-        }
+            match self.base.get_block_hash(block_number) {
+                Ok(value) => Ok(value),
+                Err(e) => Err(self.handle_error(remaining_gas, e)),
+            }
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: get_block_hash: {} us", elapsed_us);
+        result
     }
 
     fn get_execution_info(&mut self, remaining_gas: &mut u64) -> SyscallResult<ExecutionInfo> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.get_execution_info.base_syscall_cost(),
-            SyscallSelector::GetExecutionInfo,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.get_execution_info.base_syscall_cost(),
+                SyscallSelector::GetExecutionInfo,
+            )?;
 
-        Ok(ExecutionInfo {
-            block_info: self.get_block_info(),
-            tx_info: self.get_tx_info_v1(),
-            caller_address: Felt::from(self.base.call.caller_address),
-            contract_address: Felt::from(self.base.call.storage_address),
-            entry_point_selector: self.base.call.entry_point_selector.0,
-        })
+            Ok(ExecutionInfo {
+                block_info: self.get_block_info(),
+                tx_info: self.get_tx_info_v1(),
+                caller_address: Felt::from(self.base.call.caller_address),
+                contract_address: Felt::from(self.base.call.storage_address),
+                entry_point_selector: self.base.call.entry_point_selector.0,
+            })
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: get_execution_info: {} us", elapsed_us);
+        result
     }
 
     fn get_class_hash_at(
@@ -287,36 +301,48 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         contract_address: Felt,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Felt> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.get_class_hash_at.base_syscall_cost(),
-            SyscallSelector::GetClassHashAt,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.get_class_hash_at.base_syscall_cost(),
+                SyscallSelector::GetClassHashAt,
+            )?;
 
-        let request = ContractAddress::try_from(contract_address)
-            .map_err(|err| self.handle_error(remaining_gas, err.into()))?;
+            let request = ContractAddress::try_from(contract_address)
+                .map_err(|err| self.handle_error(remaining_gas, err.into()))?;
 
-        let class_hash = self
-            .base
-            .get_class_hash_at(request)
-            .map_err(|err| self.handle_error(remaining_gas, err))?;
-        Ok(class_hash.0)
+            let class_hash = self
+                .base
+                .get_class_hash_at(request)
+                .map_err(|err| self.handle_error(remaining_gas, err))?;
+            Ok(class_hash.0)
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: get_class_hash_at: {} us", elapsed_us);
+        result
     }
 
     fn get_execution_info_v2(&mut self, remaining_gas: &mut u64) -> SyscallResult<ExecutionInfoV2> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.get_execution_info.base_syscall_cost(),
-            SyscallSelector::GetExecutionInfo,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.get_execution_info.base_syscall_cost(),
+                SyscallSelector::GetExecutionInfo,
+            )?;
 
-        Ok(ExecutionInfoV2 {
-            block_info: self.get_block_info(),
-            tx_info: self.get_tx_info_v2()?,
-            caller_address: Felt::from(self.base.call.caller_address),
-            contract_address: Felt::from(self.base.call.storage_address),
-            entry_point_selector: self.base.call.entry_point_selector.0,
-        })
+            Ok(ExecutionInfoV2 {
+                block_info: self.get_block_info(),
+                tx_info: self.get_tx_info_v2()?,
+                caller_address: Felt::from(self.base.call.caller_address),
+                contract_address: Felt::from(self.base.call.storage_address),
+                entry_point_selector: self.base.call.entry_point_selector.0,
+            })
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: get_execution_info_v2: {} us", elapsed_us);
+        result
     }
 
     fn deploy(
@@ -327,40 +353,52 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         deploy_from_zero: bool,
         remaining_gas: &mut u64,
     ) -> SyscallResult<(Felt, Vec<Felt>)> {
-        // The cost of deploying a contract is the base cost plus the linear cost of the calldata
-        // len.
-        let total_gas_cost =
-            self.gas_costs().syscalls.deploy.get_syscall_cost(u64_from_usize(calldata.len()));
+        let start = Instant::now();
+        let result = (|| {
+            // The cost of deploying a contract is the base cost plus the linear cost of the calldata
+            // len.
+            let total_gas_cost =
+                self.gas_costs().syscalls.deploy.get_syscall_cost(u64_from_usize(calldata.len()));
 
-        self.pre_execute_syscall(remaining_gas, total_gas_cost, SyscallSelector::Deploy)?;
+            self.pre_execute_syscall(remaining_gas, total_gas_cost, SyscallSelector::Deploy)?;
 
-        let (deployed_contract_address, call_info) = self
-            .base
-            .deploy(
-                ClassHash(class_hash),
-                ContractAddressSalt(contract_address_salt),
-                Calldata(Arc::new(calldata.to_vec())),
-                deploy_from_zero,
-                remaining_gas,
-            )
-            .map_err(|err| self.handle_error(remaining_gas, err))?;
+            let (deployed_contract_address, call_info) = self
+                .base
+                .deploy(
+                    ClassHash(class_hash),
+                    ContractAddressSalt(contract_address_salt),
+                    Calldata(Arc::new(calldata.to_vec())),
+                    deploy_from_zero,
+                    remaining_gas,
+                )
+                .map_err(|err| self.handle_error(remaining_gas, err))?;
 
-        let constructor_retdata = call_info.execution.retdata.0[..].to_vec();
-        self.base.inner_calls.push(call_info);
+            let constructor_retdata = call_info.execution.retdata.0[..].to_vec();
+            self.base.inner_calls.push(call_info);
 
-        Ok((Felt::from(deployed_contract_address), constructor_retdata))
+            Ok((Felt::from(deployed_contract_address), constructor_retdata))
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: deploy: {} us", elapsed_us);
+        result
     }
     fn replace_class(&mut self, class_hash: Felt, remaining_gas: &mut u64) -> SyscallResult<()> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.replace_class.base_syscall_cost(),
-            SyscallSelector::ReplaceClass,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.replace_class.base_syscall_cost(),
+                SyscallSelector::ReplaceClass,
+            )?;
 
-        self.base
-            .replace_class(ClassHash(class_hash))
-            .map_err(|err| self.handle_error(remaining_gas, err))?;
-        Ok(())
+            self.base
+                .replace_class(ClassHash(class_hash))
+                .map_err(|err| self.handle_error(remaining_gas, err))?;
+            Ok(())
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: replace_class: {} us", elapsed_us);
+        result
     }
 
     fn meta_tx_v0(
@@ -371,29 +409,35 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         signature: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<Vec<Felt>> {
-        // The cost of MetaTxV0 syscall is the base cost plus the linear cost of the calldata
-        // len.
-        let total_gas_cost =
-            self.gas_costs().syscalls.meta_tx_v0.get_syscall_cost(u64_from_usize(calldata.len()));
+        let start = Instant::now();
+        let result = (|| {
+            // The cost of MetaTxV0 syscall is the base cost plus the linear cost of the calldata
+            // len.
+            let total_gas_cost =
+                self.gas_costs().syscalls.meta_tx_v0.get_syscall_cost(u64_from_usize(calldata.len()));
 
-        self.pre_execute_syscall(remaining_gas, total_gas_cost, SyscallSelector::MetaTxV0)?;
+            self.pre_execute_syscall(remaining_gas, total_gas_cost, SyscallSelector::MetaTxV0)?;
 
-        let contract_address = ContractAddress::try_from(address)
-            .map_err(|error| self.handle_error(remaining_gas, error.into()))?;
-        let selector = EntryPointSelector(entry_point_selector);
-        let wrapper_calldata = Calldata(Arc::new(calldata.to_vec()));
-        let signature = TransactionSignature(signature.to_vec().into());
+            let contract_address = ContractAddress::try_from(address)
+                .map_err(|error| self.handle_error(remaining_gas, error.into()))?;
+            let selector = EntryPointSelector(entry_point_selector);
+            let wrapper_calldata = Calldata(Arc::new(calldata.to_vec()));
+            let signature = TransactionSignature(signature.to_vec().into());
 
-        let raw_data_result = self.base.meta_tx_v0(
-            contract_address,
-            selector,
-            wrapper_calldata,
-            signature,
-            remaining_gas,
-        );
-        let raw_data = raw_data_result.map_err(|e| self.handle_error(remaining_gas, e))?;
+            let raw_data_result = self.base.meta_tx_v0(
+                contract_address,
+                selector,
+                wrapper_calldata,
+                signature,
+                remaining_gas,
+            );
+            let raw_data = raw_data_result.map_err(|e| self.handle_error(remaining_gas, e))?;
 
-        Ok(raw_data)
+            Ok(raw_data)
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: meta_tx_v0: {} us", elapsed_us);
+        result
     }
 
     fn library_call(
@@ -403,42 +447,48 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         calldata: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<Vec<Felt>> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.library_call.base_syscall_cost(),
-            SyscallSelector::LibraryCall,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.library_call.base_syscall_cost(),
+                SyscallSelector::LibraryCall,
+            )?;
 
-        let class_hash = ClassHash(class_hash);
+            let class_hash = ClassHash(class_hash);
 
-        let wrapper_calldata = Calldata(Arc::new(calldata.to_vec()));
+            let wrapper_calldata = Calldata(Arc::new(calldata.to_vec()));
 
-        let selector = EntryPointSelector(function_selector);
+            let selector = EntryPointSelector(function_selector);
 
-        let entry_point = CallEntryPoint {
-            class_hash: Some(class_hash),
-            code_address: None,
-            entry_point_type: EntryPointType::External,
-            entry_point_selector: selector,
-            calldata: wrapper_calldata,
-            // The call context remains the same in a library call.
-            storage_address: self.base.call.storage_address,
-            caller_address: self.base.call.caller_address,
-            call_type: CallType::Delegate,
-            initial_gas: *remaining_gas,
-        };
-
-        let error_wrapper_function =
-            |e: SyscallExecutionError,
-             class_hash: ClassHash,
-             storage_address: ContractAddress,
-             selector: EntryPointSelector| {
-                e.as_lib_call_execution_error(class_hash, storage_address, selector)
+            let entry_point = CallEntryPoint {
+                class_hash: Some(class_hash),
+                code_address: None,
+                entry_point_type: EntryPointType::External,
+                entry_point_selector: selector,
+                calldata: wrapper_calldata,
+                // The call context remains the same in a library call.
+                storage_address: self.base.call.storage_address,
+                caller_address: self.base.call.caller_address,
+                call_type: CallType::Delegate,
+                initial_gas: *remaining_gas,
             };
 
-        Ok(self
-            .execute_inner_call(entry_point, remaining_gas, class_hash, error_wrapper_function)?
-            .0)
+            let error_wrapper_function =
+                |e: SyscallExecutionError,
+                 class_hash: ClassHash,
+                 storage_address: ContractAddress,
+                 selector: EntryPointSelector| {
+                    e.as_lib_call_execution_error(class_hash, storage_address, selector)
+                };
+
+            Ok(self
+                .execute_inner_call(entry_point, remaining_gas, class_hash, error_wrapper_function)?
+                .0)
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: library_call: {} us", elapsed_us);
+        result
     }
 
     fn call_contract(
@@ -448,59 +498,65 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         calldata: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<Vec<Felt>> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.call_contract.base_syscall_cost(),
-            SyscallSelector::CallContract,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.call_contract.base_syscall_cost(),
+                SyscallSelector::CallContract,
+            )?;
 
-        let contract_address = ContractAddress::try_from(address)
-            .map_err(|error| self.handle_error(remaining_gas, error.into()))?;
+            let contract_address = ContractAddress::try_from(address)
+                .map_err(|error| self.handle_error(remaining_gas, error.into()))?;
 
-        let class_hash = self
-            .base
-            .state
-            .get_class_hash_at(contract_address)
-            .map_err(|e| self.handle_error(remaining_gas, e.into()))?;
-        if self.base.context.execution_mode == ExecutionMode::Validate
-            && self.base.call.storage_address != contract_address
-        {
-            let err = SyscallExecutorBaseError::InvalidSyscallInExecutionMode {
-                syscall_name: "call_contract".to_string(),
-                execution_mode: self.base.context.execution_mode,
-            };
-            return Err(self.handle_error(remaining_gas, err.into()));
-        }
-        let selector = EntryPointSelector(entry_point_selector);
-        self.base
-            .maybe_block_direct_execute_call(selector)
-            .map_err(|e| self.handle_error(remaining_gas, e))?;
+            let class_hash = self
+                .base
+                .state
+                .get_class_hash_at(contract_address)
+                .map_err(|e| self.handle_error(remaining_gas, e.into()))?;
+            if self.base.context.execution_mode == ExecutionMode::Validate
+                && self.base.call.storage_address != contract_address
+            {
+                let err = SyscallExecutorBaseError::InvalidSyscallInExecutionMode {
+                    syscall_name: "call_contract".to_string(),
+                    execution_mode: self.base.context.execution_mode,
+                };
+                return Err(self.handle_error(remaining_gas, err.into()));
+            }
+            let selector = EntryPointSelector(entry_point_selector);
+            self.base
+                .maybe_block_direct_execute_call(selector)
+                .map_err(|e| self.handle_error(remaining_gas, e))?;
 
-        let wrapper_calldata = Calldata(Arc::new(calldata.to_vec()));
+            let wrapper_calldata = Calldata(Arc::new(calldata.to_vec()));
 
-        let entry_point = CallEntryPoint {
-            class_hash: None,
-            code_address: Some(contract_address),
-            entry_point_type: EntryPointType::External,
-            entry_point_selector: selector,
-            calldata: wrapper_calldata,
-            storage_address: contract_address,
-            caller_address: self.base.call.storage_address,
-            call_type: CallType::Call,
-            initial_gas: *remaining_gas,
-        };
-
-        let error_wrapper_function =
-            |e: SyscallExecutionError,
-             class_hash: ClassHash,
-             storage_address: ContractAddress,
-             selector: EntryPointSelector| {
-                e.as_call_contract_execution_error(class_hash, storage_address, selector)
+            let entry_point = CallEntryPoint {
+                class_hash: None,
+                code_address: Some(contract_address),
+                entry_point_type: EntryPointType::External,
+                entry_point_selector: selector,
+                calldata: wrapper_calldata,
+                storage_address: contract_address,
+                caller_address: self.base.call.storage_address,
+                call_type: CallType::Call,
+                initial_gas: *remaining_gas,
             };
 
-        Ok(self
-            .execute_inner_call(entry_point, remaining_gas, class_hash, error_wrapper_function)?
-            .0)
+            let error_wrapper_function =
+                |e: SyscallExecutionError,
+                 class_hash: ClassHash,
+                 storage_address: ContractAddress,
+                 selector: EntryPointSelector| {
+                    e.as_call_contract_execution_error(class_hash, storage_address, selector)
+                };
+
+            Ok(self
+                .execute_inner_call(entry_point, remaining_gas, class_hash, error_wrapper_function)?
+                .0)
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: call_contract: {} us", elapsed_us);
+        result
     }
 
     fn storage_read(
@@ -509,23 +565,29 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         address: Felt,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Felt> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.storage_read.base_syscall_cost(),
-            SyscallSelector::StorageRead,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.storage_read.base_syscall_cost(),
+                SyscallSelector::StorageRead,
+            )?;
 
-        if address_domain != 0 {
-            let address_domain = Felt::from(address_domain);
-            let error = SyscallExecutorBaseError::InvalidAddressDomain { address_domain }.into();
-            return Err(self.handle_error(remaining_gas, error));
-        }
+            if address_domain != 0 {
+                let address_domain = Felt::from(address_domain);
+                let error = SyscallExecutorBaseError::InvalidAddressDomain { address_domain }.into();
+                return Err(self.handle_error(remaining_gas, error));
+            }
 
-        let key = StorageKey::try_from(address)
-            .map_err(|e| self.handle_error(remaining_gas, e.into()))?;
+            let key = StorageKey::try_from(address)
+                .map_err(|e| self.handle_error(remaining_gas, e.into()))?;
 
-        let value = self.base.storage_read(key).map_err(|e| self.handle_error(remaining_gas, e))?;
-        Ok(value)
+            let value = self.base.storage_read(key).map_err(|e| self.handle_error(remaining_gas, e))?;
+            Ok(value)
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: storage_read: {} us", elapsed_us);
+        result
     }
 
     fn storage_write(
@@ -535,23 +597,29 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         value: Felt,
         remaining_gas: &mut u64,
     ) -> SyscallResult<()> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.storage_write.base_syscall_cost(),
-            SyscallSelector::StorageWrite,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.storage_write.base_syscall_cost(),
+                SyscallSelector::StorageWrite,
+            )?;
 
-        if address_domain != 0 {
-            let address_domain = Felt::from(address_domain);
-            let error = SyscallExecutorBaseError::InvalidAddressDomain { address_domain }.into();
-            return Err(self.handle_error(remaining_gas, error));
-        }
+            if address_domain != 0 {
+                let address_domain = Felt::from(address_domain);
+                let error = SyscallExecutorBaseError::InvalidAddressDomain { address_domain }.into();
+                return Err(self.handle_error(remaining_gas, error));
+            }
 
-        let key = StorageKey::try_from(address)
-            .map_err(|e| self.handle_error(remaining_gas, e.into()))?;
-        self.base.storage_write(key, value).map_err(|e| self.handle_error(remaining_gas, e))?;
+            let key = StorageKey::try_from(address)
+                .map_err(|e| self.handle_error(remaining_gas, e.into()))?;
+            self.base.storage_write(key, value).map_err(|e| self.handle_error(remaining_gas, e))?;
 
-        Ok(())
+            Ok(())
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: storage_write: {} us", elapsed_us);
+        result
     }
 
     fn emit_event(
@@ -560,19 +628,25 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         data: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<()> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.emit_event.base_syscall_cost(),
-            SyscallSelector::EmitEvent,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.emit_event.base_syscall_cost(),
+                SyscallSelector::EmitEvent,
+            )?;
 
-        let event = EventContent {
-            keys: keys.iter().copied().map(EventKey).collect(),
-            data: EventData(data.to_vec()),
-        };
+            let event = EventContent {
+                keys: keys.iter().copied().map(EventKey).collect(),
+                data: EventData(data.to_vec()),
+            };
 
-        self.base.emit_event(event).map_err(|e| self.handle_error(remaining_gas, e))?;
-        Ok(())
+            self.base.emit_event(event).map_err(|e| self.handle_error(remaining_gas, e))?;
+            Ok(())
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: emit_event: {} us", elapsed_us);
+        result
     }
 
     fn send_message_to_l1(
@@ -581,42 +655,67 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         payload: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<()> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.send_message_to_l1.base_syscall_cost(),
-            SyscallSelector::SendMessageToL1,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.send_message_to_l1.base_syscall_cost(),
+                SyscallSelector::SendMessageToL1,
+            )?;
 
-        let to_address = L1Address::from(to_address);
-        let message = MessageToL1 { to_address, payload: L2ToL1Payload(payload.to_vec()) };
+            let to_address = L1Address::from(to_address);
+            let message = MessageToL1 { to_address, payload: L2ToL1Payload(payload.to_vec()) };
 
-        self.base.send_message_to_l1(message).map_err(|err| self.handle_error(remaining_gas, err))
+            self.base.send_message_to_l1(message).map_err(|err| self.handle_error(remaining_gas, err))
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: send_message_to_l1: {} us", elapsed_us);
+        result
     }
 
     fn keccak(&mut self, input: &[u64], remaining_gas: &mut u64) -> SyscallResult<U256> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.keccak.base_syscall_cost(),
-            SyscallSelector::Keccak,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.keccak.base_syscall_cost(),
+                SyscallSelector::Keccak,
+            )?;
 
-        match base_keccak(
-            self.gas_costs().syscalls.keccak_round.base_syscall_cost(),
-            input,
-            remaining_gas,
-        ) {
-            Ok((state, n_rounds)) => {
-                // For the keccak system call we want to count the number of rounds rather than the
-                // number of syscall invocations.
-                self.base.increment_syscall_count_by(SyscallSelector::Keccak, n_rounds);
-
-                Ok(U256 {
-                    hi: u128::from(state[2]) | (u128::from(state[3]) << 64),
-                    lo: u128::from(state[0]) | (u128::from(state[1]) << 64),
-                })
+            if std::env::var_os("BLOCKIFIER_HASH_LOGS").is_some() {
+                let input_hex = input
+                    .iter()
+                    .map(|v| format!("{:#x}", v))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                log::info!(
+                    "blockifier-cairo-native-exec: keccak: values=[{}]",
+                    input_hex
+                );
             }
-            Err(err) => Err(self.handle_error(remaining_gas, err.into())),
-        }
+
+            match base_keccak(
+                self.gas_costs().syscalls.keccak_round.base_syscall_cost(),
+                input,
+                remaining_gas,
+            ) {
+                Ok((state, n_rounds)) => {
+                    // For the keccak system call we want to count the number of rounds rather than the
+                    // number of syscall invocations.
+                    self.base.increment_syscall_count_by(SyscallSelector::Keccak, n_rounds);
+
+                    Ok(U256 {
+                        hi: u128::from(state[2]) | (u128::from(state[3]) << 64),
+                        lo: u128::from(state[0]) | (u128::from(state[1]) << 64),
+                    })
+                }
+                Err(err) => Err(self.handle_error(remaining_gas, err.into())),
+            }
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        timing::record_cairo_keccak(_elapsed_us);
+        // log::info!("tx_timing: cairo-native: syscall: keccak: {} us", elapsed_us);
+        result
     }
 
     fn secp256k1_new(
@@ -625,15 +724,21 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         y: U256,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Option<Secp256k1Point>> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.secp256k1_new.base_syscall_cost(),
-            SyscallSelector::Secp256k1New,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.secp256k1_new.base_syscall_cost(),
+                SyscallSelector::Secp256k1New,
+            )?;
 
-        Secp256Point::new(x, y)
-            .map(|op| op.map(|p| p.into()))
-            .map_err(|e| self.handle_error(remaining_gas, e))
+            Secp256Point::new(x, y)
+                .map(|op| op.map(|p| p.into()))
+                .map_err(|e| self.handle_error(remaining_gas, e))
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: secp256k1_new: {} us", elapsed_us);
+        result
     }
 
     fn secp256k1_add(
@@ -642,13 +747,19 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         p1: Secp256k1Point,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Secp256k1Point> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.secp256k1_add.base_syscall_cost(),
-            SyscallSelector::Secp256k1Add,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.secp256k1_add.base_syscall_cost(),
+                SyscallSelector::Secp256k1Add,
+            )?;
 
-        Ok(Secp256Point::add(p0.into(), p1.into()).into())
+            Ok(Secp256Point::add(p0.into(), p1.into()).into())
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: secp256k1_add: {} us", elapsed_us);
+        result
     }
 
     fn secp256k1_mul(
@@ -657,13 +768,19 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         m: U256,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Secp256k1Point> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.secp256k1_mul.base_syscall_cost(),
-            SyscallSelector::Secp256k1Mul,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.secp256k1_mul.base_syscall_cost(),
+                SyscallSelector::Secp256k1Mul,
+            )?;
 
-        Ok(Secp256Point::mul(p.into(), m).into())
+            Ok(Secp256Point::mul(p.into(), m).into())
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: secp256k1_mul: {} us", elapsed_us);
+        result
     }
 
     fn secp256k1_get_point_from_x(
@@ -672,15 +789,24 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         y_parity: bool,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Option<Secp256k1Point>> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.secp256k1_get_point_from_x.base_syscall_cost(),
-            SyscallSelector::Secp256k1GetPointFromX,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.secp256k1_get_point_from_x.base_syscall_cost(),
+                SyscallSelector::Secp256k1GetPointFromX,
+            )?;
 
-        Secp256Point::get_point_from_x(x, y_parity)
-            .map(|op| op.map(|p| p.into()))
-            .map_err(|e| self.handle_error(remaining_gas, e))
+            Secp256Point::get_point_from_x(x, y_parity)
+                .map(|op| op.map(|p| p.into()))
+                .map_err(|e| self.handle_error(remaining_gas, e))
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!(
+            // "tx_timing: cairo-native: syscall: secp256k1_get_point_from_x: {} us",
+            // elapsed_us
+        // );
+        result
     }
 
     fn secp256k1_get_xy(
@@ -688,13 +814,19 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         p: Secp256k1Point,
         remaining_gas: &mut u64,
     ) -> SyscallResult<(U256, U256)> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.secp256k1_get_xy.base_syscall_cost(),
-            SyscallSelector::Secp256k1GetXy,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.secp256k1_get_xy.base_syscall_cost(),
+                SyscallSelector::Secp256k1GetXy,
+            )?;
 
-        Ok((p.x, p.y))
+            Ok((p.x, p.y))
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: secp256k1_get_xy: {} us", elapsed_us);
+        result
     }
 
     fn secp256r1_new(
@@ -703,15 +835,21 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         y: U256,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Option<Secp256r1Point>> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.secp256r1_new.base_syscall_cost(),
-            SyscallSelector::Secp256r1New,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.secp256r1_new.base_syscall_cost(),
+                SyscallSelector::Secp256r1New,
+            )?;
 
-        Secp256Point::new(x, y)
-            .map(|option| option.map(|p| p.into()))
-            .map_err(|err| self.handle_error(remaining_gas, err))
+            Secp256Point::new(x, y)
+                .map(|option| option.map(|p| p.into()))
+                .map_err(|err| self.handle_error(remaining_gas, err))
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: secp256r1_new: {} us", elapsed_us);
+        result
     }
 
     fn secp256r1_add(
@@ -720,13 +858,19 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         p1: Secp256r1Point,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Secp256r1Point> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.secp256r1_add.base_syscall_cost(),
-            SyscallSelector::Secp256r1Add,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.secp256r1_add.base_syscall_cost(),
+                SyscallSelector::Secp256r1Add,
+            )?;
 
-        Ok(Secp256Point::add(p0.into(), p1.into()).into())
+            Ok(Secp256Point::add(p0.into(), p1.into()).into())
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: secp256r1_add: {} us", elapsed_us);
+        result
     }
 
     fn secp256r1_mul(
@@ -735,13 +879,19 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         m: U256,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Secp256r1Point> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.secp256r1_mul.base_syscall_cost(),
-            SyscallSelector::Secp256r1Mul,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.secp256r1_mul.base_syscall_cost(),
+                SyscallSelector::Secp256r1Mul,
+            )?;
 
-        Ok(Secp256Point::mul(p.into(), m).into())
+            Ok(Secp256Point::mul(p.into(), m).into())
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: secp256r1_mul: {} us", elapsed_us);
+        result
     }
 
     fn secp256r1_get_point_from_x(
@@ -750,15 +900,24 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         y_parity: bool,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Option<Secp256r1Point>> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.secp256r1_get_point_from_x.base_syscall_cost(),
-            SyscallSelector::Secp256r1GetPointFromX,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.secp256r1_get_point_from_x.base_syscall_cost(),
+                SyscallSelector::Secp256r1GetPointFromX,
+            )?;
 
-        Secp256Point::get_point_from_x(x, y_parity)
-            .map(|option| option.map(|p| p.into()))
-            .map_err(|err| self.handle_error(remaining_gas, err))
+            Secp256Point::get_point_from_x(x, y_parity)
+                .map(|option| option.map(|p| p.into()))
+                .map_err(|err| self.handle_error(remaining_gas, err))
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!(
+            // "tx_timing: cairo-native: syscall: secp256r1_get_point_from_x: {} us",
+            // elapsed_us
+        // );
+        result
     }
 
     fn secp256r1_get_xy(
@@ -766,13 +925,19 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         p: Secp256r1Point,
         remaining_gas: &mut u64,
     ) -> SyscallResult<(U256, U256)> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.secp256r1_get_xy.base_syscall_cost(),
-            SyscallSelector::Secp256r1GetXy,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.secp256r1_get_xy.base_syscall_cost(),
+                SyscallSelector::Secp256r1GetXy,
+            )?;
 
-        Ok((p.x, p.y))
+            Ok((p.x, p.y))
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: secp256r1_get_xy: {} us", elapsed_us);
+        result
     }
 
     fn sha256_process_block(
@@ -781,22 +946,28 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         current_block: &[u32; 16],
         remaining_gas: &mut u64,
     ) -> SyscallResult<()> {
-        self.pre_execute_syscall(
-            remaining_gas,
-            self.gas_costs().syscalls.sha256_process_block.base_syscall_cost(),
-            SyscallSelector::Sha256ProcessBlock,
-        )?;
+        let start = Instant::now();
+        let result = (|| {
+            self.pre_execute_syscall(
+                remaining_gas,
+                self.gas_costs().syscalls.sha256_process_block.base_syscall_cost(),
+                SyscallSelector::Sha256ProcessBlock,
+            )?;
 
-        let data_as_bytes = sha2::digest::generic_array::GenericArray::from_exact_iter(
-            current_block.iter().flat_map(|x| x.to_be_bytes()),
-        )
-        .expect(
-            "u32.to_be_bytes() returns 4 bytes, and data.len() == 16. So data contains 64 bytes.",
-        );
+            let data_as_bytes = sha2::digest::generic_array::GenericArray::from_exact_iter(
+                current_block.iter().flat_map(|x| x.to_be_bytes()),
+            )
+            .expect(
+                "u32.to_be_bytes() returns 4 bytes, and data.len() == 16. So data contains 64 bytes.",
+            );
 
-        sha2::compress256(prev_state, &[data_as_bytes]);
+            sha2::compress256(prev_state, &[data_as_bytes]);
 
-        Ok(())
+            Ok(())
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-native: syscall: sha256: {} us", elapsed_us);
+        result
     }
 }
 

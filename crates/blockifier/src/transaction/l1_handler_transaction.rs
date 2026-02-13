@@ -11,7 +11,7 @@ use crate::execution::call_info::CallInfo;
 use crate::execution::entry_point::{EntryPointExecutionContext, SierraGasRevertTracker};
 use crate::execution::stack_trace::gen_tx_execution_error_trace;
 use crate::fee::fee_checks::FeeCheckReport;
-use crate::fee::receipt::TransactionReceipt;
+use crate::fee::receipt::{hardcoded_receipt, skip_fee_and_resources, TransactionReceipt};
 use crate::state::cached_state::TransactionalState;
 use crate::state::state_api::UpdatableState;
 use crate::transaction::errors::{TransactionExecutionError, TransactionFeeError};
@@ -59,6 +59,7 @@ impl<U: UpdatableState> ExecutableTransaction<U> for L1HandlerTransaction {
         block_context: &BlockContext,
         _concurrency_mode: bool,
     ) -> TransactionExecutionResult<TransactionExecutionInfo> {
+        let skip_fee = skip_fee_and_resources();
         let tx_context = Arc::new(block_context.to_tx_context(self));
         let limit_steps_by_resources = false;
         let l1_handler_bounds =
@@ -79,6 +80,14 @@ impl<U: UpdatableState> ExecutableTransaction<U> for L1HandlerTransaction {
             self.run_execute(&mut execution_state, &mut context, &mut remaining_gas);
         match execution_result {
             Ok(execute_call_info) => {
+                if skip_fee {
+                    execution_state.commit();
+                    return Ok(l1_handler_tx_execution_info(
+                        execute_call_info,
+                        hardcoded_receipt(),
+                        None,
+                    ));
+                }
                 let receipt = TransactionReceipt::from_l1_handler(
                     &tx_context,
                     l1_handler_payload_size,
@@ -131,8 +140,11 @@ impl<U: UpdatableState> ExecutableTransaction<U> for L1HandlerTransaction {
             }
             Err(execution_error) => {
                 execution_state.abort();
-                let receipt =
-                    TransactionReceipt::reverted_l1_handler(&tx_context, l1_handler_payload_size);
+                let receipt = if skip_fee {
+                    hardcoded_receipt()
+                } else {
+                    TransactionReceipt::reverted_l1_handler(&tx_context, l1_handler_payload_size)
+                };
                 Ok(l1_handler_tx_execution_info(
                     None,
                     receipt,

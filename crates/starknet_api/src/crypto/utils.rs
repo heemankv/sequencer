@@ -9,8 +9,23 @@ use serde::{Deserialize, Serialize};
 use starknet_types_core::felt::Felt;
 use starknet_types_core::hash::{Pedersen, Poseidon, StarkHash as CoreStarkHash};
 use thiserror::Error;
+use std::time::Instant;
 
 use crate::hash::StarkHash;
+use crate::hash_cache;
+use crate::hash_metrics;
+
+fn hash_logs_enabled() -> bool {
+    std::env::var_os("BLOCKIFIER_HASH_LOGS").is_some()
+}
+
+fn felts_to_hex(values: &[Felt]) -> String {
+    values
+        .iter()
+        .map(|v| format!("{:#x}", v))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// An error that can occur during cryptographic operations.
 
@@ -113,12 +128,80 @@ impl HashChain {
 
     // Returns the pedersen hash of the chained felts, hashed with the length of the chain.
     pub fn get_pedersen_hash(&self) -> StarkHash {
-        Pedersen::hash_array(self.elements.as_slice())
+        let timing_start = if hash_metrics::hash_timing_enabled() {
+            Some(Instant::now())
+        } else {
+            None
+        };
+        let log_start = if hash_logs_enabled() {
+            Some(Instant::now())
+        } else {
+            None
+        };
+        let out = if let Some(cached) = hash_cache::pedersen_array_get(self.elements.as_slice()) {
+            if let Some(start) = log_start {
+                let total_us = start.elapsed().as_micros();
+                tracing::info!(
+                    "blockifier-starknet-api-exec: pedersen_array: cache-hit : values=[{}] : result={:#x} : total_us={}",
+                    felts_to_hex(self.elements.as_slice()),
+                    cached,
+                    total_us
+                );
+            }
+            cached
+        } else {
+            let out = Pedersen::hash_array(self.elements.as_slice());
+            hash_cache::pedersen_array_insert(self.elements.as_slice(), out);
+            if let Some(start) = log_start {
+                let total_us = start.elapsed().as_micros();
+                tracing::info!(
+                    "blockifier-starknet-api-exec: pedersen_array: cache-miss : values=[{}] : result={:#x} : total_us={}",
+                    felts_to_hex(self.elements.as_slice()),
+                    out,
+                    total_us
+                );
+            }
+            out
+        };
+        if let Some(start) = timing_start {
+            hash_metrics::record_pedersen(start.elapsed().as_micros() as u64);
+        }
+        out
     }
 
     // Returns the poseidon hash of the chained felts.
     pub fn get_poseidon_hash(&self) -> StarkHash {
-        Poseidon::hash_array(self.elements.as_slice())
+        let log_start = if hash_logs_enabled() {
+            Some(Instant::now())
+        } else {
+            None
+        };
+        let out = if let Some(cached) = hash_cache::poseidon_array_get(self.elements.as_slice()) {
+            if let Some(start) = log_start {
+                let total_us = start.elapsed().as_micros();
+                tracing::info!(
+                    "blockifier-starknet-api-exec: poseidon(hash_array): cache-hit : values=[{}] : result={:#x} : total_us={}",
+                    felts_to_hex(self.elements.as_slice()),
+                    cached,
+                    total_us
+                );
+            }
+            cached
+        } else {
+            let out = Poseidon::hash_array(self.elements.as_slice());
+            hash_cache::poseidon_array_insert(self.elements.as_slice(), out);
+            if let Some(start) = log_start {
+                let total_us = start.elapsed().as_micros();
+                tracing::info!(
+                    "blockifier-starknet-api-exec: poseidon(hash_array): cache-miss : values=[{}] : result={:#x} : total_us={}",
+                    felts_to_hex(self.elements.as_slice()),
+                    out,
+                    total_us
+                );
+            }
+            out
+        };
+        out
     }
 }
 

@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Instant;
 
 use cairo_lang_casm::hints::Hint;
 use cairo_lang_runner::casm_run::execute_core_hint_base;
@@ -507,47 +508,53 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         remaining_gas: &mut u64,
     ) -> Result<CallContractResponse, Self::Error> {
-        let storage_address = request.contract_address;
-        let class_hash = syscall_handler.base.state.get_class_hash_at(storage_address)?;
-        let selector = request.function_selector;
-        if syscall_handler.is_validate_mode()
-            && syscall_handler.storage_address() != storage_address
-        {
-            return Err(SyscallExecutorBaseError::InvalidSyscallInExecutionMode {
-                syscall_name: "call_contract".to_string(),
-                execution_mode: syscall_handler.execution_mode(),
+        let start = Instant::now();
+        let result = (|| {
+            let storage_address = request.contract_address;
+            let class_hash = syscall_handler.base.state.get_class_hash_at(storage_address)?;
+            let selector = request.function_selector;
+            if syscall_handler.is_validate_mode()
+                && syscall_handler.storage_address() != storage_address
+            {
+                return Err(SyscallExecutorBaseError::InvalidSyscallInExecutionMode {
+                    syscall_name: "call_contract".to_string(),
+                    execution_mode: syscall_handler.execution_mode(),
+                }
+                .into());
             }
-            .into());
-        }
-        syscall_handler.base.maybe_block_direct_execute_call(selector)?;
+            syscall_handler.base.maybe_block_direct_execute_call(selector)?;
 
-        let entry_point = CallEntryPoint {
-            class_hash: None,
-            code_address: Some(storage_address),
-            entry_point_type: EntryPointType::External,
-            entry_point_selector: selector,
-            calldata: request.calldata,
-            storage_address,
-            caller_address: syscall_handler.storage_address(),
-            call_type: CallType::Call,
-            // NOTE: this value might be overridden later on.
-            initial_gas: *remaining_gas,
-        };
+            let entry_point = CallEntryPoint {
+                class_hash: None,
+                code_address: Some(storage_address),
+                entry_point_type: EntryPointType::External,
+                entry_point_selector: selector,
+                calldata: request.calldata,
+                storage_address,
+                caller_address: syscall_handler.storage_address(),
+                call_type: CallType::Call,
+                // NOTE: this value might be overridden later on.
+                initial_gas: *remaining_gas,
+            };
 
-        let retdata_segment = execute_inner_call(entry_point, vm, syscall_handler, remaining_gas)
-            .map_err(|error| {
-                SyscallExecutionError::from_self_or_revert(error.try_extract_revert().map_original(
-                    |error| {
-                        error.as_call_contract_execution_error(
-                            class_hash,
-                            storage_address,
-                            selector,
-                        )
-                    },
-                ))
-            })?;
+            let retdata_segment = execute_inner_call(entry_point, vm, syscall_handler, remaining_gas)
+                .map_err(|error| {
+                    SyscallExecutionError::from_self_or_revert(error.try_extract_revert().map_original(
+                        |error| {
+                            error.as_call_contract_execution_error(
+                                class_hash,
+                                storage_address,
+                                selector,
+                            )
+                        },
+                    ))
+                })?;
 
-        Ok(CallContractResponse { segment: retdata_segment })
+            Ok(CallContractResponse { segment: retdata_segment })
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: call_contract: {} us", elapsed_us);
+        result
     }
 
     fn deploy(
@@ -556,18 +563,24 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         remaining_gas: &mut u64,
     ) -> Result<DeployResponse, Self::Error> {
-        let (deployed_contract_address, call_info) = syscall_handler.base.deploy(
-            request.class_hash,
-            request.contract_address_salt,
-            request.constructor_calldata,
-            request.deploy_from_zero,
-            remaining_gas,
-        )?;
-        let constructor_retdata =
-            create_retdata_segment(vm, syscall_handler, &call_info.execution.retdata.0)?;
-        syscall_handler.base.inner_calls.push(call_info);
+        let start = Instant::now();
+        let result = (|| {
+            let (deployed_contract_address, call_info) = syscall_handler.base.deploy(
+                request.class_hash,
+                request.contract_address_salt,
+                request.constructor_calldata,
+                request.deploy_from_zero,
+                remaining_gas,
+            )?;
+            let constructor_retdata =
+                create_retdata_segment(vm, syscall_handler, &call_info.execution.retdata.0)?;
+            syscall_handler.base.inner_calls.push(call_info);
 
-        Ok(DeployResponse { contract_address: deployed_contract_address, constructor_retdata })
+            Ok(DeployResponse { contract_address: deployed_contract_address, constructor_retdata })
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: deploy: {} us", elapsed_us);
+        result
     }
 
     fn emit_event(
@@ -576,8 +589,14 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         _remaining_gas: &mut u64,
     ) -> Result<EmitEventResponse, Self::Error> {
-        syscall_handler.base.emit_event(request.content)?;
-        Ok(EmitEventResponse {})
+        let start = Instant::now();
+        let result = (|| {
+            syscall_handler.base.emit_event(request.content)?;
+            Ok(EmitEventResponse {})
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: emit_event: {} us", elapsed_us);
+        result
     }
 
     // TODO(Aner): should this be here or in the trait?
@@ -591,8 +610,14 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         _remaining_gas: &mut u64,
     ) -> Result<GetBlockHashResponse, Self::Error> {
-        let block_hash = BlockHash(syscall_handler.base.get_block_hash(request.block_number.0)?);
-        Ok(GetBlockHashResponse { block_hash })
+        let start = Instant::now();
+        let result = (|| {
+            let block_hash = BlockHash(syscall_handler.base.get_block_hash(request.block_number.0)?);
+            Ok(GetBlockHashResponse { block_hash })
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: get_block_hash: {} us", elapsed_us);
+        result
     }
 
     fn get_class_hash_at(
@@ -601,7 +626,11 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         _remaining_gas: &mut u64,
     ) -> Result<GetClassHashAtResponse, Self::Error> {
-        syscall_handler.base.get_class_hash_at(request)
+        let start = Instant::now();
+        let result = syscall_handler.base.get_class_hash_at(request);
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: get_class_hash_at: {} us", elapsed_us);
+        result
     }
 
     fn get_execution_info(
@@ -610,9 +639,14 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         _remaining_gas: &mut u64,
     ) -> Result<GetExecutionInfoResponse, Self::Error> {
-        let execution_info_ptr = syscall_handler.get_or_allocate_execution_info_segment(vm)?;
-
-        Ok(GetExecutionInfoResponse { execution_info_ptr })
+        let start = Instant::now();
+        let result = (|| {
+            let execution_info_ptr = syscall_handler.get_or_allocate_execution_info_segment(vm)?;
+            Ok(GetExecutionInfoResponse { execution_info_ptr })
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: get_execution_info: {} us", elapsed_us);
+        result
     }
 
     fn library_call(
@@ -621,31 +655,37 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         remaining_gas: &mut u64,
     ) -> Result<LibraryCallResponse, Self::Error> {
-        let entry_point = CallEntryPoint {
-            class_hash: Some(request.class_hash),
-            code_address: None,
-            entry_point_type: EntryPointType::External,
-            entry_point_selector: request.function_selector,
-            calldata: request.calldata,
-            // The call context remains the same in a library call.
-            storage_address: syscall_handler.storage_address(),
-            caller_address: syscall_handler.caller_address(),
-            call_type: CallType::Delegate,
-            // NOTE: this value might be overridden later on.
-            initial_gas: *remaining_gas,
-        };
+        let start = Instant::now();
+        let result = (|| {
+            let entry_point = CallEntryPoint {
+                class_hash: Some(request.class_hash),
+                code_address: None,
+                entry_point_type: EntryPointType::External,
+                entry_point_selector: request.function_selector,
+                calldata: request.calldata,
+                // The call context remains the same in a library call.
+                storage_address: syscall_handler.storage_address(),
+                caller_address: syscall_handler.caller_address(),
+                call_type: CallType::Delegate,
+                // NOTE: this value might be overridden later on.
+                initial_gas: *remaining_gas,
+            };
 
-        let retdata_segment = execute_inner_call(entry_point, vm, syscall_handler, remaining_gas)
-            .map_err(|error| match error {
-                SyscallExecutionError::Revert { .. } => error,
-                _ => error.as_lib_call_execution_error(
-                    request.class_hash,
-                    syscall_handler.storage_address(),
-                    request.function_selector,
-                ),
-            })?;
+            let retdata_segment = execute_inner_call(entry_point, vm, syscall_handler, remaining_gas)
+                .map_err(|error| match error {
+                    SyscallExecutionError::Revert { .. } => error,
+                    _ => error.as_lib_call_execution_error(
+                        request.class_hash,
+                        syscall_handler.storage_address(),
+                        request.function_selector,
+                    ),
+                })?;
 
-        Ok(LibraryCallResponse { segment: retdata_segment })
+            Ok(LibraryCallResponse { segment: retdata_segment })
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: library_call: {} us", elapsed_us);
+        result
     }
 
     fn meta_tx_v0(
@@ -654,19 +694,25 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         remaining_gas: &mut u64,
     ) -> Result<MetaTxV0Response, Self::Error> {
-        let storage_address = request.contract_address;
-        let selector = request.entry_point_selector;
+        let start = Instant::now();
+        let result = (|| {
+            let storage_address = request.contract_address;
+            let selector = request.entry_point_selector;
 
-        let raw_retdata = syscall_handler.base.meta_tx_v0(
-            storage_address,
-            selector,
-            request.calldata,
-            request.signature,
-            remaining_gas,
-        )?;
-        let retdata_segment = create_retdata_segment(vm, syscall_handler, &raw_retdata)?;
+            let raw_retdata = syscall_handler.base.meta_tx_v0(
+                storage_address,
+                selector,
+                request.calldata,
+                request.signature,
+                remaining_gas,
+            )?;
+            let retdata_segment = create_retdata_segment(vm, syscall_handler, &raw_retdata)?;
 
-        Ok(MetaTxV0Response { segment: retdata_segment })
+            Ok(MetaTxV0Response { segment: retdata_segment })
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: meta_tx_v0: {} us", elapsed_us);
+        result
     }
 
     fn replace_class(
@@ -675,8 +721,14 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         _remaining_gas: &mut u64,
     ) -> Result<ReplaceClassResponse, Self::Error> {
-        syscall_handler.base.replace_class(request.class_hash)?;
-        Ok(ReplaceClassResponse {})
+        let start = Instant::now();
+        let result = (|| {
+            syscall_handler.base.replace_class(request.class_hash)?;
+            Ok(ReplaceClassResponse {})
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: replace_class: {} us", elapsed_us);
+        result
     }
 
     fn send_message_to_l1(
@@ -685,8 +737,14 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         _remaining_gas: &mut u64,
     ) -> Result<SendMessageToL1Response, Self::Error> {
-        syscall_handler.base.send_message_to_l1(request.message)?;
-        Ok(SendMessageToL1Response {})
+        let start = Instant::now();
+        let result = (|| {
+            syscall_handler.base.send_message_to_l1(request.message)?;
+            Ok(SendMessageToL1Response {})
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: send_message_to_l1: {} us", elapsed_us);
+        result
     }
 
     fn storage_read(
@@ -695,7 +753,11 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         _remaining_gas: &mut u64,
     ) -> Result<StorageReadResponse, Self::Error> {
-        let value = syscall_handler.base.storage_read(request.address)?;
+        let start = Instant::now();
+        let result = syscall_handler.base.storage_read(request.address);
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: storage_read: {} us", elapsed_us);
+        let value = result?;
         Ok(StorageReadResponse { value })
     }
 
@@ -705,7 +767,11 @@ impl SyscallExecutor for SyscallHintProcessor<'_> {
         syscall_handler: &mut Self,
         _remaining_gas: &mut u64,
     ) -> Result<StorageWriteResponse, Self::Error> {
-        syscall_handler.base.storage_write(request.address, request.value)?;
+        let start = Instant::now();
+        let result = syscall_handler.base.storage_write(request.address, request.value);
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: storage_write: {} us", elapsed_us);
+        result?;
         Ok(StorageWriteResponse {})
     }
 

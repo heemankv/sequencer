@@ -7,6 +7,7 @@ use starknet_types_core::felt::Felt;
 
 use crate::context::{BlockContext, TransactionContext};
 use crate::execution::call_info::CallInfo;
+use crate::fee::receipt::skip_fee_and_resources;
 use crate::fee::fee_utils::get_sequencer_balance_keys;
 use crate::state::cached_state::{ContractClassMapping, StateMaps};
 use crate::state::state_api::UpdatableState;
@@ -30,6 +31,9 @@ pub fn complete_fee_transfer_flow(
     state: &mut impl UpdatableState,
     tx: &Transaction,
 ) {
+    if skip_fee_and_resources() {
+        return;
+    }
     if tx_context.is_sequencer_the_sender() {
         // When the sequencer is the sender, we use the sequential (full) fee transfer.
         return;

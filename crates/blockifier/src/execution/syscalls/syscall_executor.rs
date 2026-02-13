@@ -4,6 +4,7 @@ use num_traits::ToPrimitive;
 use sha2::digest::generic_array::GenericArray;
 use starknet_api::execution_resources::GasAmount;
 use starknet_types_core::felt::Felt;
+use std::time::Instant;
 
 use crate::blockifier_versioned_constants::{
     GasCosts,
@@ -161,38 +162,45 @@ pub trait SyscallExecutor {
         syscall_handler: &mut Self,
         remaining_gas: &mut u64,
     ) -> Result<KeccakResponse, Self::Error> {
-        let input_length =
-            (request.input_end - request.input_start).map_err(SyscallExecutorBaseError::from)?;
+        let start = Instant::now();
+        let result = (|| {
+            let input_length =
+                (request.input_end - request.input_start).map_err(SyscallExecutorBaseError::from)?;
 
-        let data = vm
-            .get_integer_range(request.input_start, input_length)
-            .map_err(SyscallExecutorBaseError::from)?;
-        let data_u64: &[u64] = &data
-            .iter()
-            .map(|felt| {
-                {
-                    felt.to_u64().ok_or_else(|| SyscallExecutorBaseError::InvalidSyscallInput {
-                        input: **felt,
-                        info: "Invalid input for the keccak syscall.".to_string(),
-                    })
-                }
+            let data = vm
+                .get_integer_range(request.input_start, input_length)
+                .map_err(SyscallExecutorBaseError::from)?;
+            let data_u64: &[u64] = &data
+                .iter()
+                .map(|felt| {
+                    {
+                        felt.to_u64().ok_or_else(|| SyscallExecutorBaseError::InvalidSyscallInput {
+                            input: **felt,
+                            info: "Invalid input for the keccak syscall.".to_string(),
+                        })
+                    }
+                })
+                .collect::<Result<Vec<u64>, _>>()?;
+
+            let (state, n_rounds) = base_keccak(
+                syscall_handler.gas_costs().syscalls.keccak_round.base_syscall_cost(),
+                data_u64,
+                remaining_gas,
+            )?;
+
+            // For the keccak system call we want to count the number of rounds rather than the number
+            // of syscall invocations.
+            syscall_handler.increment_syscall_count_by(&SyscallSelector::Keccak, n_rounds);
+
+            Ok(KeccakResponse {
+                result_low: (Felt::from(state[1]) * Felt::TWO.pow(64_u128)) + Felt::from(state[0]),
+                result_high: (Felt::from(state[3]) * Felt::TWO.pow(64_u128)) + Felt::from(state[2]),
             })
-            .collect::<Result<Vec<u64>, _>>()?;
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: keccak: {} us", elapsed_us);
 
-        let (state, n_rounds) = base_keccak(
-            syscall_handler.gas_costs().syscalls.keccak_round.base_syscall_cost(),
-            data_u64,
-            remaining_gas,
-        )?;
-
-        // For the keccak system call we want to count the number of rounds rather than the number
-        // of syscall invocations.
-        syscall_handler.increment_syscall_count_by(&SyscallSelector::Keccak, n_rounds);
-
-        Ok(KeccakResponse {
-            result_low: (Felt::from(state[1]) * Felt::TWO.pow(64_u128)) + Felt::from(state[0]),
-            result_high: (Felt::from(state[3]) * Felt::TWO.pow(64_u128)) + Felt::from(state[2]),
-        })
+        result
     }
 
     fn library_call(
@@ -216,43 +224,48 @@ pub trait SyscallExecutor {
         _remaining_gas: &mut u64,
     ) -> Result<Sha256ProcessBlockResponse, Self::Error> {
         const SHA256_BLOCK_SIZE: usize = 16;
+        let start = Instant::now();
+        let result = (|| {
+            let data = vm
+                .get_integer_range(request.input_start, SHA256_BLOCK_SIZE)
+                .map_err(SyscallExecutorBaseError::from)?;
+            const SHA256_STATE_SIZE: usize = 8;
+            let prev_state = vm
+                .get_integer_range(request.state_ptr, SHA256_STATE_SIZE)
+                .map_err(SyscallExecutorBaseError::from)?;
 
-        let data = vm
-            .get_integer_range(request.input_start, SHA256_BLOCK_SIZE)
-            .map_err(SyscallExecutorBaseError::from)?;
-        const SHA256_STATE_SIZE: usize = 8;
-        let prev_state = vm
-            .get_integer_range(request.state_ptr, SHA256_STATE_SIZE)
-            .map_err(SyscallExecutorBaseError::from)?;
+            let data_as_bytes: GenericArray<u8, sha2::digest::consts::U64> =
+                sha2::digest::generic_array::GenericArray::from_exact_iter(data.iter().flat_map(
+                    |felt| {
+                        felt.to_bigint()
+                            .to_u32()
+                            .expect("libfunc should ensure the input is an [u32; 16].")
+                            .to_be_bytes()
+                    },
+                ))
+                .expect(
+                    "u32.to_be_bytes() returns 4 bytes, and data.len() == 16. So data contains 64 \
+                     bytes.",
+                );
 
-        let data_as_bytes: GenericArray<u8, sha2::digest::consts::U64> =
-            sha2::digest::generic_array::GenericArray::from_exact_iter(data.iter().flat_map(
-                |felt| {
-                    felt.to_bigint()
-                        .to_u32()
-                        .expect("libfunc should ensure the input is an [u32; 16].")
-                        .to_be_bytes()
-                },
-            ))
-            .expect(
-                "u32.to_be_bytes() returns 4 bytes, and data.len() == 16. So data contains 64 \
-                 bytes.",
-            );
+            let mut state_as_words: [u32; SHA256_STATE_SIZE] = core::array::from_fn(|i| {
+                prev_state[i].to_bigint().to_u32().expect(
+                    "libfunc only accepts SHA256StateHandle which can only be created from an \
+                     Array<u32>.",
+                )
+            });
 
-        let mut state_as_words: [u32; SHA256_STATE_SIZE] = core::array::from_fn(|i| {
-            prev_state[i].to_bigint().to_u32().expect(
-                "libfunc only accepts SHA256StateHandle which can only be created from an \
-                 Array<u32>.",
-            )
-        });
+            sha2::compress256(&mut state_as_words, &[data_as_bytes]);
 
-        sha2::compress256(&mut state_as_words, &[data_as_bytes]);
+            let data: Vec<MaybeRelocatable> =
+                state_as_words.iter().map(|&arg| MaybeRelocatable::from(Felt::from(arg))).collect();
+            let response = syscall_handler.write_sha256_out_state(&data, vm)?;
 
-        let data: Vec<MaybeRelocatable> =
-            state_as_words.iter().map(|&arg| MaybeRelocatable::from(Felt::from(arg))).collect();
-        let response = syscall_handler.write_sha256_out_state(&data, vm)?;
-
-        Ok(Sha256ProcessBlockResponse { state_ptr: response })
+            Ok(Sha256ProcessBlockResponse { state_ptr: response })
+        })();
+        let _elapsed_us = start.elapsed().as_micros();
+        // log::info!("tx_timing: cairo-vm: syscall: sha256: {} us", elapsed_us);
+        result
     }
 
     fn replace_class(

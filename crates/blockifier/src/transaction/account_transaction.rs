@@ -46,7 +46,7 @@ use crate::fee::fee_utils::{
     GasVectorToL1GasForFee,
 };
 use crate::fee::gas_usage::estimate_minimal_gas_vector;
-use crate::fee::receipt::TransactionReceipt;
+use crate::fee::receipt::{hardcoded_receipt, skip_fee_and_resources, TransactionReceipt};
 use crate::retdata;
 use crate::state::cached_state::{StateCache, TransactionalState};
 use crate::state::state_api::{State, StateReader, UpdatableState};
@@ -255,7 +255,7 @@ impl AccountTransaction {
         let tx_info = &tx_context.tx_info;
         Self::handle_nonce(state, tx_info, self.execution_flags.strict_nonce_check)?;
 
-        if self.execution_flags.charge_fee {
+        if self.execution_flags.charge_fee && !skip_fee_and_resources() {
             self.check_fee_bounds(tx_context)?;
 
             verify_can_pay_committed_bounds(state, tx_context).map_err(Box::new)?;
@@ -541,6 +541,7 @@ impl AccountTransaction {
         tx_context: Arc<TransactionContext>,
         remaining_gas: &mut GasCounter,
     ) -> TransactionExecutionResult<ValidateExecuteCallInfo> {
+        let skip_fee = skip_fee_and_resources();
         let validate_call_info: Option<CallInfo>;
         let execute_call_info: Option<CallInfo>;
         if matches!(&self.tx, Transaction::DeployAccount(_)) {
@@ -549,7 +550,7 @@ impl AccountTransaction {
             // validation context.
             let mut execution_context = EntryPointExecutionContext::new_validate(
                 tx_context.clone(),
-                self.execution_flags.charge_fee,
+                self.execution_flags.charge_fee && !skip_fee,
                 // TODO(Dori): Reduce code dup (the gas usage limit is computed in run_execute).
                 // We initialize the revert gas tracker here for completeness - the value will not
                 // be used, as this tx is non-revertible.
@@ -564,7 +565,7 @@ impl AccountTransaction {
             validate_call_info = self.validate_tx(state, tx_context.clone(), remaining_gas)?;
             let mut execution_context = EntryPointExecutionContext::new_invoke(
                 tx_context.clone(),
-                self.execution_flags.charge_fee,
+                self.execution_flags.charge_fee && !skip_fee,
                 // TODO(Dori): Reduce code dup (the gas usage limit is computed in run_execute).
                 // We initialize the revert gas tracker here for completeness - the value will not
                 // be used, as this tx is non-revertible.
@@ -573,6 +574,14 @@ impl AccountTransaction {
                 )),
             );
             execute_call_info = self.run_execute(state, &mut execution_context, remaining_gas)?;
+        }
+
+        if skip_fee {
+            return Ok(ValidateExecuteCallInfo::new_accepted(
+                validate_call_info,
+                execute_call_info,
+                hardcoded_receipt(),
+            ));
         }
 
         let tx_receipt = TransactionReceipt::from_account_tx(
@@ -609,12 +618,13 @@ impl AccountTransaction {
         tx_context: Arc<TransactionContext>,
         remaining_gas: &mut GasCounter,
     ) -> TransactionExecutionResult<ValidateExecuteCallInfo> {
+        let skip_fee = skip_fee_and_resources();
         // Run the validation, and if execution later fails, only keep the validation diff.
         let validate_call_info = self.validate_tx(state, tx_context.clone(), remaining_gas)?;
 
         let mut execution_context = EntryPointExecutionContext::new_invoke(
             tx_context.clone(),
-            self.execution_flags.charge_fee,
+            self.execution_flags.charge_fee && !skip_fee,
             // TODO(Dori): Reduce code dup (the gas usage limit is computed in run_execute).
             SierraGasRevertTracker::new(GasAmount(
                 remaining_gas.limit_usage(tx_context.sierra_gas_limit(&ExecutionMode::Execute)),
@@ -628,7 +638,11 @@ impl AccountTransaction {
 
         // Save the state changes resulting from running `validate_tx`, to be used later for
         // resource and fee calculation.
-        let validate_state_cache = state.borrow_updated_state_cache()?.clone();
+        let validate_state_cache = if skip_fee {
+            None
+        } else {
+            Some(state.borrow_updated_state_cache()?.clone())
+        };
 
         // Create copies of state and validate_resources for the execution.
         // Both will be rolled back if the execution is reverted or committed upon success.
@@ -642,6 +656,12 @@ impl AccountTransaction {
             n_allotted_execution_steps - execution_context.n_remaining_steps();
         // Get the receipt only in case of revert.
         let get_revert_receipt = || {
+            if skip_fee {
+                return hardcoded_receipt();
+            }
+            let validate_state_cache = validate_state_cache
+                .as_ref()
+                .expect("validate_state_cache missing when fee/resources are enabled");
             TransactionReceipt::from_account_tx(
                 self,
                 &tx_context,
@@ -657,6 +677,14 @@ impl AccountTransaction {
 
         match execution_result {
             Ok(execute_call_info) => {
+                if skip_fee {
+                    execution_state.commit();
+                    return Ok(ValidateExecuteCallInfo::new_accepted(
+                        validate_call_info,
+                        execute_call_info,
+                        hardcoded_receipt(),
+                    ));
+                }
                 // When execution succeeded, calculate the actual required fee before committing the
                 // transactional state. If max_fee is insufficient, revert the `run_execute` part.
                 let tx_receipt = TransactionReceipt::from_account_tx(
@@ -664,7 +692,9 @@ impl AccountTransaction {
                     &tx_context,
                     &StateCache::squash_state_diff(
                         vec![
-                            &validate_state_cache,
+                            validate_state_cache
+                                .as_ref()
+                                .expect("validate_state_cache missing when fee/resources are enabled"),
                             &execution_state.borrow_updated_state_cache()?.clone(),
                         ],
                         tx_context.block_context.versioned_constants.comprehensive_state_diff,
@@ -715,6 +745,13 @@ impl AccountTransaction {
                 let revert_receipt = get_revert_receipt();
                 // Error during execution. Revert, even if the error is sequencer-related.
                 execution_state.abort();
+                if skip_fee {
+                    return Ok(ValidateExecuteCallInfo::new_reverted(
+                        validate_call_info,
+                        gen_tx_execution_error_trace(&execution_error).into(),
+                        revert_receipt,
+                    ));
+                }
                 let post_execution_report = PostExecutionReport::new(
                     state,
                     &tx_context,
@@ -774,6 +811,7 @@ impl<U: UpdatableState> ExecutableTransaction<U> for AccountTransaction {
         block_context: &BlockContext,
         concurrency_mode: bool,
     ) -> TransactionExecutionResult<TransactionExecutionInfo> {
+        let skip_fee = skip_fee_and_resources();
         let tx_context = Arc::new(block_context.to_tx_context(self));
         self.verify_tx_version(tx_context.tx_info.version())?;
 
@@ -820,13 +858,17 @@ impl<U: UpdatableState> ExecutableTransaction<U> for AccountTransaction {
                     gas: total_gas,
                 },
         } = self.run_or_revert(state, &mut GasCounter::new(initial_gas), tx_context.clone())?;
-        let fee_transfer_call_info = Self::handle_fee(
-            state,
-            tx_context,
-            final_fee,
-            self.execution_flags.charge_fee,
-            concurrency_mode,
-        )?;
+        let fee_transfer_call_info = if skip_fee {
+            None
+        } else {
+            Self::handle_fee(
+                state,
+                tx_context,
+                final_fee,
+                self.execution_flags.charge_fee,
+                concurrency_mode,
+            )?
+        };
 
         let tx_execution_info = TransactionExecutionInfo {
             validate_call_info,
@@ -894,7 +936,7 @@ impl ValidatableTransaction for AccountTransaction {
         let remaining_validation_gas = &mut remaining_gas.limit_usage(
             tx_context.block_context.versioned_constants.os_constants.validate_max_sierra_gas,
         );
-        let limit_steps_by_resources = self.execution_flags.charge_fee;
+        let limit_steps_by_resources = self.execution_flags.charge_fee && !skip_fee_and_resources();
         let mut context = EntryPointExecutionContext::new_validate(
             tx_context,
             limit_steps_by_resources,

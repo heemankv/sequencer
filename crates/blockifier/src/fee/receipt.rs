@@ -5,6 +5,7 @@ use starknet_api::transaction::fields::{Fee, GasVectorComputationMode};
 
 use crate::context::TransactionContext;
 use crate::execution::call_info::ExecutionSummary;
+use crate::hardcoded_constants;
 use crate::fee::resources::{
     ComputationResources,
     StarknetResources,
@@ -18,6 +19,23 @@ use crate::transaction::objects::HasRelatedFeeType;
 #[cfg(test)]
 #[path = "receipt_test.rs"]
 pub mod test;
+
+pub fn skip_fee_and_resources() -> bool {
+    let value = std::env::var("BLOCKIFIER_SKIP_FEE_AND_RESOURCES").unwrap_or_default();
+    if value.is_empty() {
+        return false;
+    }
+    !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off")
+}
+
+pub fn hardcoded_receipt() -> TransactionReceipt {
+    TransactionReceipt {
+        fee: hardcoded_constants::hardcoded_fee(),
+        gas: hardcoded_constants::hardcoded_gas_vector(),
+        da_gas: hardcoded_constants::hardcoded_da_gas_vector(),
+        resources: TransactionResources::default(),
+    }
+}
 
 /// Parameters required to compute actual cost of a transaction.
 struct TransactionReceiptParameters<'a> {

@@ -13,7 +13,7 @@ use crate::blockifier::transaction_executor::{
     TransactionExecutorError,
     TransactionExecutorResult,
 };
-use crate::bouncer::Bouncer;
+use crate::bouncer::{Bouncer, BouncerWeights};
 use crate::concurrency::fee_utils::complete_fee_transfer_flow;
 use crate::concurrency::scheduler::{Scheduler, Task, TransactionStatus};
 use crate::concurrency::versioned_state::{
@@ -345,7 +345,20 @@ impl<S: StateReader> WorkerExecutor<S> {
             TOTAL_CALLS.increment(call_summary.n_calls);
             CALLS_RUNNING_NATIVE.increment(call_summary.n_calls_running_native);
             // Ask the bouncer if there is room for the transaction in the block.
-            let bouncer_result = self.bouncer.lock().expect("Bouncer lock failed.").try_update(
+            let mut bouncer_guard = self.bouncer.lock().expect("Bouncer lock failed.");
+            let before_weights = {
+                let w = bouncer_guard.get_bouncer_weights();
+                BouncerWeights {
+                    l1_gas: w.l1_gas,
+                    message_segment_length: w.message_segment_length,
+                    n_events: w.n_events,
+                    state_diff_size: w.state_diff_size,
+                    sierra_gas: w.sierra_gas,
+                    n_txs: w.n_txs,
+                    proving_gas: w.proving_gas,
+                }
+            };
+            let bouncer_result = bouncer_guard.try_update(
                 &tx_versioned_state,
                 &tx_state_changes_keys,
                 &execution_summary,
@@ -361,6 +374,26 @@ impl<S: StateReader> WorkerExecutor<S> {
                         panic!("Bouncer update failed. {error:?}: {error}");
                     }
                 }
+            }
+            let after_weights = {
+                let w = bouncer_guard.get_bouncer_weights();
+                BouncerWeights {
+                    l1_gas: w.l1_gas,
+                    message_segment_length: w.message_segment_length,
+                    n_events: w.n_events,
+                    state_diff_size: w.state_diff_size,
+                    sierra_gas: w.sierra_gas,
+                    n_txs: w.n_txs,
+                    proving_gas: w.proving_gas,
+                }
+            };
+            if let Some(delta) = after_weights.checked_sub(before_weights) {
+                log::info!(
+                    "BOUNCER_TX_WEIGHTS: tx_hash={:?} delta={:?} total={:?}",
+                    Transaction::tx_hash(tx.as_ref()),
+                    delta,
+                    after_weights
+                );
             }
 
             complete_fee_transfer_flow(

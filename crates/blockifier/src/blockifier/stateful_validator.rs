@@ -14,7 +14,7 @@ use crate::blockifier::transaction_executor::{
 use crate::context::{BlockContext, GasCounter, TransactionContext};
 use crate::execution::call_info::CallInfo;
 use crate::fee::fee_checks::PostValidationReport;
-use crate::fee::receipt::TransactionReceipt;
+use crate::fee::receipt::{hardcoded_receipt, skip_fee_and_resources, TransactionReceipt};
 use crate::state::cached_state::CachedState;
 use crate::state::errors::StateError;
 use crate::state::state_api::StateReader;
@@ -83,6 +83,10 @@ impl<S: StateReader> StatefulValidator<S> {
                 // `__validate__` call.
                 let (_optional_call_info, actual_cost) = self.validate(&tx, tx_context.clone())?;
 
+                if skip_fee_and_resources() {
+                    return Ok(());
+                }
+
                 // Post validations.
                 PostValidationReport::verify(
                     &tx_context,
@@ -114,6 +118,10 @@ impl<S: StateReader> StatefulValidator<S> {
             tx_context.clone(),
             &mut GasCounter::new(tx_context.initial_sierra_gas()),
         )?;
+
+        if skip_fee_and_resources() {
+            return Ok((validate_call_info, hardcoded_receipt()));
+        }
 
         let tx_receipt = TransactionReceipt::from_account_tx(
             tx,

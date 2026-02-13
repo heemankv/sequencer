@@ -5,6 +5,7 @@ mod core_test;
 use std::fmt::Debug;
 use std::str::FromStr;
 use std::sync::LazyLock;
+use std::time::Instant;
 
 use apollo_sizeof::SizeOf;
 use num_traits::ToPrimitive;
@@ -15,10 +16,24 @@ use starknet_types_core::felt::{Felt, NonZeroFelt};
 use starknet_types_core::hash::{Pedersen, StarkHash as CoreStarkHash};
 
 use crate::crypto::utils::PublicKey;
+use crate::hash_cache;
+use crate::hash_metrics;
 use crate::hash::{PoseidonHash, StarkHash};
 use crate::serde_utils::{BytesAsHex, PrefixedBytesAsHex};
 use crate::transaction::fields::{Calldata, ContractAddressSalt};
 use crate::{impl_from_through_intermediate, StarknetApiError, StarknetApiResult};
+
+fn hash_logs_enabled() -> bool {
+    std::env::var_os("BLOCKIFIER_HASH_LOGS").is_some()
+}
+
+fn felts_to_hex(values: &[Felt]) -> String {
+    values
+        .iter()
+        .map(|v| format!("{:#x}", v))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// Felt.
 pub fn ascii_as_felt(ascii_str: &str) -> Result<Felt, StarknetApiError> {
@@ -200,17 +215,95 @@ pub fn calculate_contract_address(
     constructor_calldata: &Calldata,
     deployer_address: ContractAddress,
 ) -> Result<ContractAddress, StarknetApiError> {
-    let constructor_calldata_hash = Pedersen::hash_array(&constructor_calldata.0);
+    let timing_start = if hash_metrics::hash_timing_enabled() {
+        Some(Instant::now())
+    } else {
+        None
+    };
+    let log_start = if hash_logs_enabled() {
+        Some(Instant::now())
+    } else {
+        None
+    };
+    let constructor_calldata_hash = if let Some(cached) = hash_cache::pedersen_array_get(&constructor_calldata.0)
+    {
+        if let Some(start) = log_start {
+            let total_us = start.elapsed().as_micros();
+            tracing::info!(
+                "blockifier-starknet-api-exec: pedersen_array: cache-hit : values=[{}] : result={:#x} : total_us={}",
+                felts_to_hex(&constructor_calldata.0),
+                cached,
+                total_us
+            );
+        }
+        cached
+    } else {
+        let out = Pedersen::hash_array(&constructor_calldata.0);
+        hash_cache::pedersen_array_insert(&constructor_calldata.0, out);
+        if let Some(start) = log_start {
+            let total_us = start.elapsed().as_micros();
+            tracing::info!(
+                "blockifier-starknet-api-exec: pedersen_array: cache-miss : values=[{}] : result={:#x} : total_us={}",
+                felts_to_hex(&constructor_calldata.0),
+                out,
+                total_us
+            );
+        }
+        out
+    };
+    if let Some(start) = timing_start {
+        hash_metrics::record_pedersen(start.elapsed().as_micros() as u64);
+    }
     let contract_address_prefix = format!("0x{}", hex::encode(CONTRACT_ADDRESS_PREFIX));
-    let address = Pedersen::hash_array(&[
+    let timing_start = if hash_metrics::hash_timing_enabled() {
+        Some(Instant::now())
+    } else {
+        None
+    };
+    let contract_address_prefix_felt =
         Felt::from_hex(contract_address_prefix.as_str()).map_err(|_| {
             StarknetApiError::OutOfRange { string: contract_address_prefix.clone() }
-        })?,
+        })?;
+    let log_start = if hash_logs_enabled() {
+        Some(Instant::now())
+    } else {
+        None
+    };
+    let values = [
+        contract_address_prefix_felt,
         *deployer_address.0.key(),
         salt.0,
         class_hash.0,
         constructor_calldata_hash,
-    ]);
+    ];
+    let address = if let Some(cached) = hash_cache::pedersen_array_get(&values) {
+        if let Some(start) = log_start {
+            let total_us = start.elapsed().as_micros();
+            tracing::info!(
+                "blockifier-starknet-api-exec: pedersen_array: cache-hit : values=[{}] : result={:#x} : total_us={}",
+                felts_to_hex(&values),
+                cached,
+                total_us
+            );
+        }
+        cached
+    } else {
+        let out = Pedersen::hash_array(&values);
+        hash_cache::pedersen_array_insert(&values, out);
+        if let Some(start) = log_start {
+            let total_us = start.elapsed().as_micros();
+            tracing::info!(
+                "blockifier-starknet-api-exec: pedersen_array: cache-miss : values=[{}] : result={:#x} : total_us={}",
+                felts_to_hex(&values),
+                out,
+                total_us
+            );
+        }
+        out
+    };
+    if let Some(start) = timing_start {
+        hash_metrics::record_pedersen(start.elapsed().as_micros() as u64);
+    }
     let (_, address) = address.div_rem(&L2_ADDRESS_UPPER_BOUND);
 
     ContractAddress::try_from(address)

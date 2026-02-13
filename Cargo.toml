@@ -403,4 +403,4 @@ as_conversions = "warn"
 
 [patch.crates-io]
 cairo-vm = { path = "/Users/heemankverma/Work/Karnot/RvsC/cairo-vm/vm" }
-cairo-native = { path = "/Users/heemankverma/Work/Karnot/RvsC/vendor/cairo-native-0.7.3" }
+cairo-native = { path = "/Users/heemankverma/Work/Karnot/RvsC/cairo-native-0.7.3" }

@@ -160,7 +160,20 @@ impl<S: StateReader> TransactionExecutor<S> {
             Ok(tx_execution_info) => {
                 let state_diff = transactional_state.to_state_diff()?.state_maps;
                 let tx_state_changes_keys = state_diff.keys();
-                lock_bouncer(&self.bouncer).try_update(
+                let mut bouncer_guard = lock_bouncer(&self.bouncer);
+                let before_weights = {
+                    let w = bouncer_guard.get_bouncer_weights();
+                    BouncerWeights {
+                        l1_gas: w.l1_gas,
+                        message_segment_length: w.message_segment_length,
+                        n_events: w.n_events,
+                        state_diff_size: w.state_diff_size,
+                        sierra_gas: w.sierra_gas,
+                        n_txs: w.n_txs,
+                        proving_gas: w.proving_gas,
+                    }
+                };
+                bouncer_guard.try_update(
                     &transactional_state,
                     &tx_state_changes_keys,
                     &tx_execution_info.summarize(&self.block_context.versioned_constants),
@@ -168,6 +181,26 @@ impl<S: StateReader> TransactionExecutor<S> {
                     &tx_execution_info.receipt.resources,
                     &self.block_context.versioned_constants,
                 )?;
+                let after_weights = {
+                    let w = bouncer_guard.get_bouncer_weights();
+                    BouncerWeights {
+                        l1_gas: w.l1_gas,
+                        message_segment_length: w.message_segment_length,
+                        n_events: w.n_events,
+                        state_diff_size: w.state_diff_size,
+                        sierra_gas: w.sierra_gas,
+                        n_txs: w.n_txs,
+                        proving_gas: w.proving_gas,
+                    }
+                };
+                if let Some(delta) = after_weights.checked_sub(before_weights) {
+                    log::info!(
+                        "BOUNCER_TX_WEIGHTS: tx_hash={:?} delta={:?} total={:?}",
+                        Transaction::tx_hash(tx),
+                        delta,
+                        after_weights
+                    );
+                }
                 transactional_state.commit();
 
                 Ok((tx_execution_info, state_diff))
