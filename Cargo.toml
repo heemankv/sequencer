@@ -232,7 +232,7 @@ cairo-lang-sierra-to-casm = "2.12.3"
 cairo-lang-starknet-classes = "2.12.3"
 cairo-lang-utils = "2.12.3"
 cairo-native = "0.7.3"
-cairo-vm = { path = "/home/ubuntu/Work/Karnot/cairo-vm/vm" }
+cairo-vm = { git = "https://github.com/heemankv/cairo-vm", branch = "rvsc-testing" }
 camelpaste = "0.1.0"
 chrono = "0.4.26"
 clap = "4.5.4"
@@ -402,5 +402,5 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 as_conversions = "warn"
 
 [patch.crates-io]
-cairo-vm = { path = "/home/ubuntu/Work/Karnot/cairo-vm/vm" }
-cairo-native = { path = "/home/ubuntu/Work/Karnot/cairo-native-0.7.3" }
+cairo-vm = { git = "https://github.com/heemankv/cairo-vm", branch = "rvsc-testing" }
+cairo-native = { git = "https://github.com/heemankv/cairo_native", branch = "rvsc-testing" }
