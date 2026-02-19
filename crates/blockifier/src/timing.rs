@@ -123,6 +123,5 @@ pub fn record_cairo_keccak(us: u128) {
 
 #[inline]
 pub fn timing_logs_enabled() -> bool {
-    std::env::var_os("BLOCKIFIER_TIMING_LOGS").is_some()
-        || std::env::var_os("BLOCKIFIER_HASH_LOGS").is_some()
+    false
 }

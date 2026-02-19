@@ -7,7 +7,6 @@ use starknet_api::abi::abi_utils::get_fee_token_var_address;
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::state::StorageKey;
 use starknet_types_core::felt::Felt;
-use std::sync::OnceLock;
 
 use crate::context::TransactionContext;
 use crate::execution::contract_class::RunnableCompiledClass;
@@ -22,11 +21,6 @@ use crate::utils::{strict_subtract_mappings, subtract_mappings};
 mod test;
 
 pub type ContractClassMapping = HashMap<ClassHash, RunnableCompiledClass>;
-
-fn blockifier_storage_logs_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("BLOCKIFIER_STORAGE_LOGS").is_some())
-}
 
 /// Caches read and write requests.
 ///
@@ -134,16 +128,6 @@ impl<S: StateReader> StateReader for CachedState<S> {
         contract_address: ContractAddress,
         key: StorageKey,
     ) -> StateResult<Felt> {
-        if blockifier_storage_logs_enabled() {
-            let contract_felt: Felt = contract_address.into();
-            let key_felt: Felt = key.into();
-            tracing::info!(
-                target: "blockifier-storage-read",
-                "blockifier-storage-read: contract=0x{:x} key=0x{:x}",
-                contract_felt,
-                key_felt
-            );
-        }
         let mut cache = self.cache.borrow_mut();
 
         if cache.get_storage_at(contract_address, key).is_none() {

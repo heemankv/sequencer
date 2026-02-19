@@ -1,5 +1,5 @@
 use std::mem;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use apollo_infra_utils::tracing::LogCompatibleToStringExt;
@@ -43,20 +43,6 @@ pub enum TransactionExecutorError {
     TransactionExecutionError(#[from] TransactionExecutionError),
     #[error(transparent)]
     CompressionError(#[from] CompressionError),
-}
-
-pub(crate) fn hash_calc_totals_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        let value = std::env::var("LOG_HASH_CALC_TOTALS").unwrap_or_default();
-        if value.is_empty() {
-            return false;
-        }
-        match value.to_ascii_lowercase().as_str() {
-            "0" | "false" | "no" | "off" => false,
-            _ => true,
-        }
-    })
 }
 
 impl LogCompatibleToStringExt for TransactionExecutorError {}
@@ -239,58 +225,12 @@ impl<S: StateReader> TransactionExecutor<S> {
                     break;
                 }
             }
-            let tx_hash = Transaction::tx_hash(tx).0;
-            let hash_calc_enabled = hash_calc_totals_enabled();
-            if hash_calc_enabled {
-                starknet_api::hash_cache::reset_hash_calc_stats();
-                #[cfg(feature = "cairo_native")]
-                {
-                    cairo_native::runtime::reset_hash_calc_stats();
-                }
-            }
             match self.execute(tx) {
                 Ok((tx_execution_info, state_diff)) => {
                     results.push(Ok((tx_execution_info, state_diff)))
                 }
                 Err(TransactionExecutorError::BlockFull) => break,
                 Err(error) => results.push(Err(error)),
-            }
-            if hash_calc_enabled {
-                let totals = starknet_api::hash_cache::hash_calc_totals_snapshot();
-                let uniques = starknet_api::hash_cache::hash_calc_unique_counts();
-                log::info!(
-                    "HASH_CALC_TOTALS: exec=blockifier-starknet-api tx={:#x} pedersen={} sn_keccak={} poseidon={}",
-                    tx_hash,
-                    totals.pedersen,
-                    totals.sn_keccak,
-                    totals.poseidon
-                );
-                log::info!(
-                    "HASH_CALC_UNIQUES: exec=blockifier-starknet-api tx={:#x} pedersen={} sn_keccak={} poseidon={}",
-                    tx_hash,
-                    uniques.pedersen,
-                    uniques.sn_keccak,
-                    uniques.poseidon
-                );
-                #[cfg(feature = "cairo_native")]
-                {
-                    let totals = cairo_native::runtime::hash_calc_totals_snapshot();
-                    let uniques = cairo_native::runtime::hash_calc_unique_counts();
-                    log::info!(
-                        "HASH_CALC_TOTALS: exec=blockifier-cairo-native tx={:#x} pedersen={} sn_keccak={} poseidon={}",
-                        tx_hash,
-                        totals.pedersen,
-                        totals.sn_keccak,
-                        totals.poseidon
-                    );
-                    log::info!(
-                        "HASH_CALC_UNIQUES: exec=blockifier-cairo-native tx={:#x} pedersen={} sn_keccak={} poseidon={}",
-                        tx_hash,
-                        uniques.pedersen,
-                        uniques.sn_keccak,
-                        uniques.poseidon
-                    );
-                }
             }
         }
         results

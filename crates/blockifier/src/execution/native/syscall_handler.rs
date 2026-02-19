@@ -682,18 +682,6 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
                 SyscallSelector::Keccak,
             )?;
 
-            if std::env::var_os("BLOCKIFIER_HASH_LOGS").is_some() {
-                let input_hex = input
-                    .iter()
-                    .map(|v| format!("{:#x}", v))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                log::info!(
-                    "blockifier-cairo-native-exec: keccak: values=[{}]",
-                    input_hex
-                );
-            }
-
             match base_keccak(
                 self.gas_costs().syscalls.keccak_round.base_syscall_cost(),
                 input,

@@ -1,8 +1,6 @@
 use cairo_native::execution_result::{BuiltinStats, ContractExecutionResult};
-use cairo_native::runtime;
 use cairo_native::utils::BuiltinCosts;
 use cairo_vm::types::builtin_name::BuiltinName;
-use std::time::Instant;
 
 use crate::execution::call_info::{BuiltinCounterMap, CallExecution, CallInfo, Retdata};
 use crate::execution::contract_class::TrackedResource;
@@ -53,21 +51,6 @@ pub fn execute_entry_point_call(
         .checked_sub(initial_budget)
         .ok_or(PreExecutionError::InsufficientEntryPointGas)?;
 
-    // Time only the native execution (not compilation)
-    let hash_logs_enabled = {
-        let value = std::env::var("BLOCKIFIER_HASH_LOGS").unwrap_or_default();
-        if value.is_empty() {
-            false
-        } else {
-            !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off")
-        }
-    };
-    let hash_timing_before = if hash_logs_enabled && runtime::hash_timing_enabled() {
-        Some(runtime::hash_timing_snapshot())
-    } else {
-        None
-    };
-    let native_exec_start = Instant::now();
     let execution_result = compiled_class.executor.run(
         entry_point.selector.0,
         &syscall_handler.base.call.calldata.0.clone(),
@@ -75,55 +58,6 @@ pub fn execute_entry_point_call(
         Some(builtin_costs),
         &mut syscall_handler,
     );
-    let native_exec_time = native_exec_start.elapsed();
-    let hash_timing_after = if hash_timing_before.is_some() {
-        Some(runtime::hash_timing_snapshot())
-    } else {
-        None
-    };
-    log::info!(
-        "Cairo Native execution completed (excluding compilation): time_us={}, time_ms={:.3}, selector={}, contract_address={}",
-        native_exec_time.as_micros(),
-        native_exec_time.as_micros() as f64 / 1000.0,
-        entry_point.selector.0,
-        syscall_handler.base.call.storage_address
-    );
-    if let (Some(before), Some(after)) = (hash_timing_before, hash_timing_after) {
-        let pedersen_total_us = after.pedersen_total_us.saturating_sub(before.pedersen_total_us);
-        let poseidon_total_us = after.poseidon_total_us.saturating_sub(before.poseidon_total_us);
-        let pedersen_calls = after.pedersen_calls.saturating_sub(before.pedersen_calls);
-        let poseidon_calls = after.poseidon_calls.saturating_sub(before.poseidon_calls);
-        let total_us = pedersen_total_us + poseidon_total_us;
-        log::info!(
-            "tx_timing: CAIRO_NATIVE_HASH_TOTAL: selector={} contract={} : {} us",
-            entry_point.selector.0,
-            syscall_handler.base.call.storage_address,
-            total_us
-        );
-        if native_exec_time.as_micros() > 0 {
-            let ratio = (total_us as f64) * 100.0 / (native_exec_time.as_micros() as f64);
-            log::info!(
-                "tx_timing: CAIRO_NATIVE_HASH_RATIO: selector={} contract={} : {:.2}% of total",
-                entry_point.selector.0,
-                syscall_handler.base.call.storage_address,
-                ratio
-            );
-        }
-        log::info!(
-            "tx_timing: CAIRO_NATIVE_HASH_PEDERSEN: selector={} contract={} : {} us ({} calls)",
-            entry_point.selector.0,
-            syscall_handler.base.call.storage_address,
-            pedersen_total_us,
-            pedersen_calls
-        );
-        log::info!(
-            "tx_timing: CAIRO_NATIVE_HASH_POSEIDON: selector={} contract={} : {} us ({} calls)",
-            entry_point.selector.0,
-            syscall_handler.base.call.storage_address,
-            poseidon_total_us,
-            poseidon_calls
-        );
-    }
 
     syscall_handler.finalize();
 
