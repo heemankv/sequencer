@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -9,6 +9,7 @@ use dashmap::mapref::one::{Ref, RefMut};
 use dashmap::DashMap;
 
 use crate::blockifier::transaction_executor::{
+    hash_calc_totals_enabled,
     TransactionExecutionOutput,
     TransactionExecutorError,
     TransactionExecutorResult,
@@ -240,10 +241,56 @@ impl<S: StateReader> WorkerExecutor<S> {
             TransactionalState::create_transactional(&mut tx_versioned_state);
         let concurrency_mode = true;
         let tx = self.tx_at(tx_index);
+        let tx_hash = Transaction::tx_hash(&tx).0;
+        let hash_calc_enabled = hash_calc_totals_enabled();
+        if hash_calc_enabled {
+            starknet_api::hash_cache::reset_hash_calc_stats();
+            #[cfg(feature = "cairo_native")]
+            {
+                cairo_native::runtime::reset_hash_calc_stats();
+            }
+        }
         let execution_start = Instant::now();
         let execution_result =
             tx.execute_raw(&mut transactional_state, &self.block_context, concurrency_mode);
         let run_time = execution_start.elapsed();
+        if hash_calc_enabled {
+            let totals = starknet_api::hash_cache::hash_calc_totals_snapshot();
+            let uniques = starknet_api::hash_cache::hash_calc_unique_counts();
+            log::info!(
+                "HASH_CALC_TOTALS: exec=blockifier-starknet-api tx={:#x} pedersen={} sn_keccak={} poseidon={}",
+                tx_hash,
+                totals.pedersen,
+                totals.sn_keccak,
+                totals.poseidon
+            );
+            log::info!(
+                "HASH_CALC_UNIQUES: exec=blockifier-starknet-api tx={:#x} pedersen={} sn_keccak={} poseidon={}",
+                tx_hash,
+                uniques.pedersen,
+                uniques.sn_keccak,
+                uniques.poseidon
+            );
+            #[cfg(feature = "cairo_native")]
+            {
+                let totals = cairo_native::runtime::hash_calc_totals_snapshot();
+                let uniques = cairo_native::runtime::hash_calc_unique_counts();
+                log::info!(
+                    "HASH_CALC_TOTALS: exec=blockifier-cairo-native tx={:#x} pedersen={} sn_keccak={} poseidon={}",
+                    tx_hash,
+                    totals.pedersen,
+                    totals.sn_keccak,
+                    totals.poseidon
+                );
+                log::info!(
+                    "HASH_CALC_UNIQUES: exec=blockifier-cairo-native tx={:#x} pedersen={} sn_keccak={} poseidon={}",
+                    tx_hash,
+                    uniques.pedersen,
+                    uniques.sn_keccak,
+                    uniques.poseidon
+                );
+            }
+        }
 
         // Update the versioned state and store the transaction execution output.
         let execution_output_inner = match execution_result {
