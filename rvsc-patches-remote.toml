@@ -1,0 +1,6 @@
+# RvsC remote patches — heemankv forks on rvsc-testing branch
+# Apply with: make rvsc-patch PATCH_MODE=remote   (or just: make rvsc-patch)
+
+[patch.crates-io]
+cairo-vm    = { git = "https://github.com/heemankv/cairo-vm",    branch = "rvsc-testing" }
+cairo-native = { git = "https://github.com/heemankv/cairo_native", branch = "rvsc-testing" }

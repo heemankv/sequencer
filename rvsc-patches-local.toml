@@ -1,0 +1,6 @@
+# RvsC local patches — absolute paths to local checkouts
+# Apply with: make rvsc-patch PATCH_MODE=local
+
+[patch.crates-io]
+cairo-vm    = { path = "/Users/heemankverma/Work/Karnot/RvsC/cairo-vm/vm" }
+cairo-native = { path = "/Users/heemankverma/Work/Karnot/RvsC/cairo-native-0.7.3" }

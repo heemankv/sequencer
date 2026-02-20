@@ -4341,6 +4341,7 @@ dependencies = [
 [[package]]
 name = "cairo-native"
 version = "0.7.3"
+source = "git+https://github.com/heemankv/cairo_native?branch=rvsc-testing#9951a3ac8d93952f45e68a2320a11956cd062503"
 dependencies = [
  "aquamarine",
  "ark-ec 0.5.0",
@@ -4382,7 +4383,7 @@ dependencies = [
 [[package]]
 name = "cairo-vm"
 version = "2.5.0"
-source = "git+https://github.com/heemankv/cairo-vm?branch=rvsc-testing#a0d32144ff5bfc10d5d849fc11816940613de8ac"
+source = "git+https://github.com/heemankv/cairo-vm?branch=rvsc-testing#d8ea1c58784d44f10f19223c0b8ff8b8add725bd"
 dependencies = [
  "anyhow",
  "bincode",
