@@ -23,7 +23,9 @@ use crate::concurrency::versioned_state::{
 };
 use crate::concurrency::TxIndex;
 use crate::context::BlockContext;
+use crate::hash_agg_log;
 use crate::metrics::{CALLS_RUNNING_NATIVE, TOTAL_CALLS};
+use crate::storage_agg_log;
 use crate::state::cached_state::{ContractClassMapping, StateMaps, TransactionalState};
 use crate::state::state_api::{StateReader, UpdatableState};
 use crate::transaction::objects::{TransactionExecutionInfo, TransactionExecutionResult};
@@ -238,12 +240,38 @@ impl<S: StateReader> WorkerExecutor<S> {
         // TODO(Yoni): is it necessary to use a transactional state here?
         let mut transactional_state =
             TransactionalState::create_transactional(&mut tx_versioned_state);
+        let hash_agg_enabled = hash_agg_log::enabled();
+        let storage_agg_enabled = storage_agg_log::enabled();
+        if hash_agg_enabled {
+            hash_agg_log::reset_for_tx(&transactional_state);
+        }
+        if storage_agg_enabled {
+            storage_agg_log::reset_for_tx();
+        }
         let concurrency_mode = true;
         let tx = self.tx_at(tx_index);
         let execution_start = Instant::now();
         let execution_result =
             tx.execute_raw(&mut transactional_state, &self.block_context, concurrency_mode);
         let run_time = execution_start.elapsed();
+        if hash_agg_enabled || storage_agg_enabled {
+            let outcome = match &execution_result {
+                Ok(info) => {
+                    if info.is_reverted() {
+                        "Reverted"
+                    } else {
+                        "Executed"
+                    }
+                }
+                Err(_) => "Error",
+            };
+            if hash_agg_enabled {
+                hash_agg_log::log_for_tx(Transaction::tx_hash(&tx), outcome, &transactional_state);
+            }
+            if storage_agg_enabled {
+                storage_agg_log::log_for_tx(Transaction::tx_hash(&tx), outcome);
+            }
+        }
 
         // Update the versioned state and store the transaction execution output.
         let execution_output_inner = match execution_result {

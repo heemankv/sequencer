@@ -2,6 +2,8 @@ use dashmap::DashMap;
 use starknet_types_core::felt::Felt;
 use std::sync::LazyLock;
 
+use crate::hash_agg;
+
 const SN_KECCAK_CACHE_CAPACITY: usize = 8 * 1024;
 const PEDERSEN_PAIR_CACHE_CAPACITY: usize = 8 * 1024;
 const PEDERSEN_ARRAY_CACHE_CAPACITY: usize = 2 * 1024;
@@ -26,9 +28,12 @@ static POSEIDON_ARRAY_CACHE: LazyLock<DashMap<Vec<Felt>, Felt>> = LazyLock::new(
 #[inline]
 pub fn sn_keccak_get(data: &[u8]) -> Option<Felt> {
     if !*HASH_CACHE_ENABLED {
+        hash_agg::record_sn_keccak_call(data, false);
         return None;
     }
-    SN_KECCAK_CACHE.get(data).map(|v| *v)
+    let cached = SN_KECCAK_CACHE.get(data).map(|v| *v);
+    hash_agg::record_sn_keccak_call(data, cached.is_some());
+    cached
 }
 
 #[inline]
@@ -45,9 +50,12 @@ pub fn sn_keccak_insert(data: &[u8], value: Felt) {
 #[inline]
 pub fn pedersen_pair_get(left: Felt, right: Felt) -> Option<Felt> {
     if !*HASH_CACHE_ENABLED {
+        hash_agg::record_pedersen_pair_call(left, right, false);
         return None;
     }
-    PEDERSEN_PAIR_CACHE.get(&(left, right)).map(|v| *v)
+    let cached = PEDERSEN_PAIR_CACHE.get(&(left, right)).map(|v| *v);
+    hash_agg::record_pedersen_pair_call(left, right, cached.is_some());
+    cached
 }
 
 #[inline]
@@ -64,9 +72,12 @@ pub fn pedersen_pair_insert(left: Felt, right: Felt, value: Felt) {
 #[inline]
 pub fn pedersen_array_get(values: &[Felt]) -> Option<Felt> {
     if !*HASH_CACHE_ENABLED {
+        hash_agg::record_pedersen_array_call(values, false);
         return None;
     }
-    PEDERSEN_ARRAY_CACHE.get(values).map(|v| *v)
+    let cached = PEDERSEN_ARRAY_CACHE.get(values).map(|v| *v);
+    hash_agg::record_pedersen_array_call(values, cached.is_some());
+    cached
 }
 
 #[inline]
@@ -83,9 +94,12 @@ pub fn pedersen_array_insert(values: &[Felt], value: Felt) {
 #[inline]
 pub fn poseidon_array_get(values: &[Felt]) -> Option<Felt> {
     if !*HASH_CACHE_ENABLED {
+        hash_agg::record_poseidon_call(values);
         return None;
     }
-    POSEIDON_ARRAY_CACHE.get(values).map(|v| *v)
+    let cached = POSEIDON_ARRAY_CACHE.get(values).map(|v| *v);
+    hash_agg::record_poseidon_call(values);
+    cached
 }
 
 #[inline]

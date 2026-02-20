@@ -1,5 +1,7 @@
 use std::cell::{Ref, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::env;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use indexmap::IndexMap;
@@ -11,7 +13,8 @@ use starknet_types_core::felt::Felt;
 use crate::context::TransactionContext;
 use crate::execution::contract_class::RunnableCompiledClass;
 use crate::state::errors::StateError;
-use crate::state::state_api::{State, StateReader, StateResult, UpdatableState};
+use crate::state::state_api::{CacheStats, State, StateReader, StateResult, UpdatableState};
+use crate::storage_agg;
 use crate::timing;
 use crate::transaction::objects::TransactionExecutionInfo;
 use crate::utils::{strict_subtract_mappings, subtract_mappings};
@@ -21,6 +24,17 @@ use crate::utils::{strict_subtract_mappings, subtract_mappings};
 mod test;
 
 pub type ContractClassMapping = HashMap<ClassHash, RunnableCompiledClass>;
+
+static HASH_AGG_ENABLED: OnceLock<bool> = OnceLock::new();
+
+#[inline]
+fn hash_agg_enabled() -> bool {
+    *HASH_AGG_ENABLED.get_or_init(|| {
+        env::var("HASH_AGG_LOGS")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
 
 /// Caches read and write requests.
 ///
@@ -34,6 +48,7 @@ pub struct CachedState<S: StateReader> {
     // Using interior mutability to update caches during `State`'s immutable getters.
     pub cache: RefCell<StateCache>,
     pub class_hash_to_class: RefCell<ContractClassMapping>,
+    cache_stats: RefCell<CacheStats>,
 }
 
 impl<S: StateReader> CachedState<S> {
@@ -42,6 +57,21 @@ impl<S: StateReader> CachedState<S> {
             state,
             cache: RefCell::new(StateCache::default()),
             class_hash_to_class: RefCell::new(HashMap::default()),
+            cache_stats: RefCell::new(CacheStats::default()),
+        }
+    }
+
+    #[inline]
+    fn record_cache_read(&self, hit: bool) {
+        if !hash_agg_enabled() {
+            return;
+        }
+        let mut stats = self.cache_stats.borrow_mut();
+        stats.reads_total = stats.reads_total.saturating_add(1);
+        if hit {
+            stats.cache_hits = stats.cache_hits.saturating_add(1);
+        } else {
+            stats.cache_misses = stats.cache_misses.saturating_add(1);
         }
     }
 
@@ -128,23 +158,42 @@ impl<S: StateReader> StateReader for CachedState<S> {
         contract_address: ContractAddress,
         key: StorageKey,
     ) -> StateResult<Felt> {
+        let storage_agg_enabled = storage_agg::enabled();
+        let start = if storage_agg_enabled { Some(Instant::now()) } else { None };
         let mut cache = self.cache.borrow_mut();
 
-        if cache.get_storage_at(contract_address, key).is_none() {
-            let storage_value = self.state.get_storage_at(contract_address, key)?;
+        let cached_value = cache.get_storage_at(contract_address, key).copied();
+        let hit = cached_value.is_some();
+        self.record_cache_read(hit);
+        if let Some(value) = cached_value {
+            if let Some(start) = start {
+                let elapsed_us = start.elapsed().as_micros() as u64;
+                storage_agg::record_cached_state_read(contract_address, key, true, elapsed_us);
+            }
+            return Ok(value);
+        }
+
+        let pre_elapsed_us = start.map(|start| start.elapsed().as_micros() as u64).unwrap_or(0);
+        let storage_value = self.state.get_storage_at(contract_address, key)?;
+        if storage_agg_enabled {
+            let post_start = Instant::now();
+            cache.set_storage_initial_value(contract_address, key, storage_value);
+            let post_elapsed_us = post_start.elapsed().as_micros() as u64;
+            let layer_us = pre_elapsed_us.saturating_add(post_elapsed_us);
+            storage_agg::record_cached_state_read(contract_address, key, false, layer_us);
+        } else {
             cache.set_storage_initial_value(contract_address, key, storage_value);
         }
 
-        let value = cache.get_storage_at(contract_address, key).unwrap_or_else(|| {
-            panic!("Cannot retrieve '{contract_address:?}' and '{key:?}' from the cache.")
-        });
-        Ok(*value)
+        Ok(storage_value)
     }
 
     fn get_nonce_at(&self, contract_address: ContractAddress) -> StateResult<Nonce> {
         let mut cache = self.cache.borrow_mut();
 
-        if cache.get_nonce_at(contract_address).is_none() {
+        let hit = cache.get_nonce_at(contract_address).is_some();
+        self.record_cache_read(hit);
+        if !hit {
             let nonce = self.state.get_nonce_at(contract_address)?;
             cache.set_nonce_initial_value(contract_address, nonce);
         }
@@ -159,7 +208,9 @@ impl<S: StateReader> StateReader for CachedState<S> {
     fn get_class_hash_at(&self, contract_address: ContractAddress) -> StateResult<ClassHash> {
         let mut cache = self.cache.borrow_mut();
 
-        if cache.get_class_hash_at(contract_address).is_none() {
+        let hit = cache.get_class_hash_at(contract_address).is_some();
+        self.record_cache_read(hit);
+        if !hit {
             let class_hash = self.state.get_class_hash_at(contract_address)?;
             cache.set_class_hash_initial_value(contract_address, class_hash);
         }
@@ -205,7 +256,9 @@ impl<S: StateReader> StateReader for CachedState<S> {
     fn get_compiled_class_hash(&self, class_hash: ClassHash) -> StateResult<CompiledClassHash> {
         let mut cache = self.cache.borrow_mut();
 
-        if cache.get_compiled_class_hash(class_hash).is_none() {
+        let hit = cache.get_compiled_class_hash(class_hash).is_some();
+        self.record_cache_read(hit);
+        if !hit {
             let compiled_class_hash = self.state.get_compiled_class_hash(class_hash)?;
             cache.set_compiled_class_hash_initial_value(class_hash, compiled_class_hash);
         }
@@ -223,6 +276,20 @@ impl<S: StateReader> StateReader for CachedState<S> {
     ) -> StateResult<CompiledClassHash> {
         self.state.get_compiled_class_hash_v2(class_hash, compiled_class)
     }
+
+    fn reset_cache_stats(&self) {
+        if !hash_agg_enabled() {
+            return;
+        }
+        *self.cache_stats.borrow_mut() = CacheStats::default();
+    }
+
+    fn cache_stats_snapshot(&self) -> CacheStats {
+        if !hash_agg_enabled() {
+            return CacheStats::default();
+        }
+        *self.cache_stats.borrow()
+    }
 }
 
 impl<S: StateReader> State for CachedState<S> {
@@ -238,6 +305,10 @@ impl<S: StateReader> State for CachedState<S> {
             Ok(())
         })();
         timing::record_state_write(start.elapsed().as_micros());
+        if storage_agg::enabled() {
+            let elapsed_us = start.elapsed().as_micros() as u64;
+            storage_agg::record_cached_state_write(contract_address, key, elapsed_us);
+        }
         result
     }
 
@@ -309,6 +380,7 @@ impl Default for CachedState<crate::test_utils::dict_state_reader::DictStateRead
             state: Default::default(),
             cache: Default::default(),
             class_hash_to_class: Default::default(),
+            cache_stats: Default::default(),
         }
     }
 }

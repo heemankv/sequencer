@@ -231,7 +231,7 @@ cairo-lang-sierra = "2.12.3"
 cairo-lang-sierra-to-casm = "2.12.3"
 cairo-lang-starknet-classes = "2.12.3"
 cairo-lang-utils = "2.12.3"
-cairo-native = "0.7.3"
+# cairo-native = "0.7.3"
 cairo-vm = { git = "https://github.com/heemankv/cairo-vm", branch = "rvsc-testing" }
 camelpaste = "0.1.0"
 chrono = "0.4.26"
@@ -381,6 +381,8 @@ waker-fn = "1.2.0"
 workspace_tests.path = "workspace_tests"
 zstd = "0.13.1"
 
+cairo-native = { path = "/Users/heemankverma/Work/Karnot/RvsC/cairo-native-0.7.3" }
+
 # Note: both rust and clippy lints are warning by default and denied on the CI (see run_tests.py).
 # To deny warnings in local dev env:
 # - In the terminal: add to .bashrc `export RUSTFLAGS="$RUSTFLAGS -Dwarnings"
@@ -403,4 +405,6 @@ as_conversions = "warn"
 
 [patch.crates-io]
 cairo-vm = { git = "https://github.com/heemankv/cairo-vm", branch = "rvsc-testing" }
-cairo-native = { git = "https://github.com/heemankv/cairo_native", branch = "rvsc-testing" }
+# cairo-native = { git = "https://github.com/heemankv/cairo_native", branch = "rvsc-testing" }
+
+# [patch."https://github.com/heemankv/cairo_native"]

@@ -12,8 +12,11 @@ pub mod concurrency;
 pub mod context;
 pub mod execution;
 pub mod fee;
+pub mod hash_agg_log;
 pub mod hardcoded_constants;
 pub mod metrics;
+pub mod storage_agg;
+pub mod storage_agg_log;
 pub mod state;
 pub mod timing;
 #[cfg(any(feature = "testing", test))]

@@ -9,6 +9,13 @@ use crate::state::errors::StateError;
 
 pub type StateResult<T> = Result<T, StateError>;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CacheStats {
+    pub reads_total: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+}
+
 // TODO(barak, 01/10/2023): Remove this enum from here once it can be used from starknet_api.
 pub enum DataAvailabilityMode {
     L1 = 0,
@@ -76,6 +83,14 @@ pub trait StateReader {
             There is a default implementation in utils.rs that can be used instead.
             However, this implementation computes the hash which may be expensive."
         );
+    }
+
+    /// Resets internal cache stats if supported by the implementation.
+    fn reset_cache_stats(&self) {}
+
+    /// Returns cache stats if supported by the implementation.
+    fn cache_stats_snapshot(&self) -> CacheStats {
+        CacheStats::default()
     }
 }
 

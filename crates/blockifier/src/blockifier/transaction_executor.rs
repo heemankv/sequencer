@@ -15,6 +15,8 @@ use crate::bouncer::{Bouncer, BouncerWeights, CasmHashComputationData};
 use crate::concurrency::worker_logic::WorkerExecutor;
 use crate::concurrency::worker_pool::WorkerPool;
 use crate::context::BlockContext;
+use crate::hash_agg_log;
+use crate::storage_agg_log;
 use crate::state::cached_state::{CachedState, CommitmentStateDiff, StateMaps, TransactionalState};
 use crate::state::compiled_class_hash_migration::CompiledClassHashMigrationUpdater;
 use crate::state::errors::StateError;
@@ -151,11 +153,37 @@ impl<S: StateReader> TransactionExecutor<S> {
         let mut transactional_state = TransactionalState::create_transactional(
             self.block_state.as_mut().expect(BLOCK_STATE_ACCESS_ERR),
         );
+        let hash_agg_enabled = hash_agg_log::enabled();
+        let storage_agg_enabled = storage_agg_log::enabled();
+        if hash_agg_enabled {
+            hash_agg_log::reset_for_tx(&transactional_state);
+        }
+        if storage_agg_enabled {
+            storage_agg_log::reset_for_tx();
+        }
 
         // Executing a single transaction cannot be done in a concurrent mode.
         let concurrency_mode = false;
         let tx_execution_result =
             tx.execute_raw(&mut transactional_state, &self.block_context, concurrency_mode);
+        if hash_agg_enabled || storage_agg_enabled {
+            let outcome = match &tx_execution_result {
+                Ok(info) => {
+                    if info.is_reverted() {
+                        "Reverted"
+                    } else {
+                        "Executed"
+                    }
+                }
+                Err(_) => "Error",
+            };
+            if hash_agg_enabled {
+                hash_agg_log::log_for_tx(Transaction::tx_hash(tx), outcome, &transactional_state);
+            }
+            if storage_agg_enabled {
+                storage_agg_log::log_for_tx(Transaction::tx_hash(tx), outcome);
+            }
+        }
         match tx_execution_result {
             Ok(tx_execution_info) => {
                 let state_diff = transactional_state.to_state_diff()?.state_maps;
