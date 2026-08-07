@@ -55,7 +55,12 @@ pub fn stop_timing() -> BlockifierTiming {
     let hash_cairo_keccak_us = CAIRO_KECCAK_US.swap(0, Ordering::Relaxed);
     let hash_cairo_keccak_calls = CAIRO_KECCAK_CALLS.swap(0, Ordering::Relaxed);
 
-    let (mut hash_pedersen_us, mut hash_pedersen_calls, hash_poseidon_us, hash_poseidon_calls) = {
+    let (mut hash_pedersen_us, mut hash_pedersen_calls, hash_poseidon_us, hash_poseidon_calls): (
+        u64,
+        u64,
+        u64,
+        u64,
+    ) = {
         #[cfg(feature = "cairo_native")]
         {
             let native = cairo_native::runtime::stop_hash_timing_global();
