@@ -11,16 +11,25 @@ const PEDERSEN_PAIR_CACHE_CAPACITY: usize = 8 * 1024;
 const PEDERSEN_ARRAY_CACHE_CAPACITY: usize = 2 * 1024;
 const POSEIDON_ARRAY_CACHE_CAPACITY: usize = 2 * 1024;
 
-static HASH_CACHE_ENABLED: LazyLock<AtomicBool> = LazyLock::new(|| {
-    let enabled = std::env::var("BLOCKIFIER_HASH_CACHE_ENABLED").is_ok_and(|value| {
-        matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
-    });
-    AtomicBool::new(enabled)
-});
+static HASH_CACHE_ENABLED: AtomicBool = AtomicBool::new(false);
 static SN_KECCAK_CACHE: LazyLock<DashMap<Vec<u8>, Felt>> = LazyLock::new(DashMap::new);
 static PEDERSEN_PAIR_CACHE: LazyLock<DashMap<(Felt, Felt), Felt>> = LazyLock::new(DashMap::new);
 static PEDERSEN_ARRAY_CACHE: LazyLock<DashMap<Vec<Felt>, Felt>> = LazyLock::new(DashMap::new);
 static POSEIDON_ARRAY_CACHE: LazyLock<DashMap<Vec<Felt>, Felt>> = LazyLock::new(DashMap::new);
+
+/// Enables or disables process-wide Starknet hash memoization.
+///
+/// Configure this once during process startup, before execution workers begin
+/// handling transactions.
+pub fn set_hash_cache_enabled(enabled: bool) {
+    HASH_CACHE_ENABLED.store(enabled, Ordering::Relaxed);
+    if !enabled {
+        SN_KECCAK_CACHE.clear();
+        PEDERSEN_PAIR_CACHE.clear();
+        PEDERSEN_ARRAY_CACHE.clear();
+        POSEIDON_ARRAY_CACHE.clear();
+    }
+}
 
 fn enabled() -> bool {
     HASH_CACHE_ENABLED.load(Ordering::Relaxed)
@@ -92,15 +101,14 @@ mod tests {
         let key = Felt::from(1_u8);
         let value = Felt::from(2_u8);
 
-        HASH_CACHE_ENABLED.store(false, Ordering::Relaxed);
+        set_hash_cache_enabled(false);
         pedersen_pair_insert(key, key, value);
         assert_eq!(pedersen_pair_get(key, key), None);
 
-        HASH_CACHE_ENABLED.store(true, Ordering::Relaxed);
+        set_hash_cache_enabled(true);
         pedersen_pair_insert(key, key, value);
         assert_eq!(pedersen_pair_get(key, key), Some(value));
 
-        HASH_CACHE_ENABLED.store(false, Ordering::Relaxed);
-        PEDERSEN_PAIR_CACHE.clear();
+        set_hash_cache_enabled(false);
     }
 }
